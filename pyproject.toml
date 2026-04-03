@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=58.1.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pomo-cli"
+version = "0.1.0"
+description = "Local pomodoro CLI for agent-assisted workflows"
+requires-python = ">=3.10"
+
+[project.scripts]
+pomo = "pomo_cli.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
