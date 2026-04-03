@@ -8,6 +8,7 @@ Make the CLI fit the real workflow better:
 - Task IDs should be chronological and easy to scan.
 - Re-running the latest task should use a dedicated `continue` command instead of overloading `start --latest`.
 - `start` should still begin with a visible countdown, but leaving the countdown UI should not terminate the session.
+- Daily reporting should reflect the tasks worked on today and the time spent today, not only tasks explicitly marked completed today.
 
 ## Current Problems
 
@@ -15,6 +16,7 @@ Make the CLI fit the real workflow better:
 2. New task IDs are derived from the title slug, which is harder to scan and creates random suffixes on collisions.
 3. Re-running a task requires `start --latest --minutes <n>`, which is technically workable but reads like a selector hack instead of a workflow action.
 4. `start` enters a blocking countdown, and `Ctrl+C` currently closes the active session. That makes "stop watching the timer" behave like "stop the pomodoro."
+5. `summary` is completion-based today, so it misses work that was done today but not yet marked completed today. That is a mismatch for an agent-oriented time-tracking report.
 
 ## Recommended Approach
 
@@ -101,6 +103,26 @@ Removed from default status output:
 
 `remaining` now belongs to `watch`, which is the command explicitly intended for live countdown inspection.
 
+### `summary`
+
+Change `summary` from a completed-task report to a worked-today report.
+
+Default fields:
+
+- `tasks_worked_on_today`
+- `tasks_completed_today`
+- `total_time_spent_today`
+- one line per task showing today's elapsed time for that task
+
+Behavior:
+
+- Aggregate from sessions whose elapsed time was finalized today.
+- Count a task as "worked on today" if it has any finalized session time today.
+- Count a task as "completed today" if its `completed_at` falls today.
+- Include tasks that were worked on today even if they remain `running` or `session_closed`.
+
+This aligns the report with the actual end goal: letting agents track how long each task took, how many tasks were touched each day, and which tasks those were.
+
 ## Data Model Changes
 
 No schema migration is required.
@@ -122,6 +144,14 @@ Generation rule:
 - Use that count plus one as the zero-padded sequence number.
 
 Existing slug-based IDs remain valid and addressable. The new format applies only to newly created tasks.
+
+### Summary aggregation source
+
+The summary view should use session data for elapsed-time aggregation.
+
+- Time totals come from sessions finalized on the requested local calendar day.
+- Completion counts still come from tasks whose `completed_at` falls on that day.
+- A task can appear in today's summary without being completed today.
 
 ## Runtime Behavior
 
@@ -147,10 +177,12 @@ Unify countdown behavior for both `start` and `continue`.
 2. Remove `--latest` from `start`; the "resume an old task" path moves to `continue`.
 3. Add a task ID generator in the service layer that derives the day-based sequence from store data.
 4. Add a store query for counting tasks created on a specific day.
-5. Change the countdown helper so interruption does not close the session.
-6. Update CLI control flow so `start`, `continue`, and `watch` each handle countdown entry and interruption explicitly.
-7. Trim `remaining` from the default `status` formatter.
-8. Update README examples and manual demo flow to reflect `continue` and `watch`.
+5. Add store queries for finalized sessions on a specific day and summary aggregation by task.
+6. Change the countdown helper so interruption does not close the session.
+7. Update CLI control flow so `start`, `continue`, and `watch` each handle countdown entry and interruption explicitly.
+8. Trim `remaining` from the default `status` formatter.
+9. Rewrite `summary` to report worked-today totals and completed-today counts separately.
+10. Update README examples and manual demo flow to reflect `continue`, `watch`, and the new summary semantics.
 
 ## Test Plan
 
@@ -169,6 +201,8 @@ Unify countdown behavior for both `start` and `continue`.
 - Task IDs reset on the next day.
 - `continue` resolves the latest task when no ID is provided.
 - Existing slug-based task IDs can still be resumed and completed.
+- Summary includes tasks worked today even when they are not completed today.
+- Summary keeps completion count separate from worked-on count.
 
 ### CLI flow tests
 
@@ -178,6 +212,7 @@ Unify countdown behavior for both `start` and `continue`.
 - `continue` starts a new session for the latest task by default.
 - `continue --task-id` starts a new session for the specified task.
 - `status` no longer prints `remaining`.
+- `summary` prints `tasks_worked_on_today`, `tasks_completed_today`, and per-task time spent today.
 
 ### Timer tests
 
@@ -191,9 +226,10 @@ Unify countdown behavior for both `start` and `continue`.
 
 - Day-based ID generation depends on local wall-clock semantics. Tests should pin exact datetimes to avoid ambiguous rollover behavior.
 - Users may still expect `status` to show live remaining time. README examples must make `watch` discoverable.
+- Day-boundary handling for session aggregation needs explicit rules in tests, especially when a task is started before midnight and finalized after midnight.
 
 ### Non-goals
 
 - No background daemon or detached watcher process.
 - No schema migration for old task IDs.
-- No change to summary aggregation behavior.
+- No attempt to split a single session's elapsed time across multiple dates.
