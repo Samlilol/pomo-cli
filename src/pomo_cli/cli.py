@@ -50,28 +50,40 @@ def build_service() -> PomoService:
     return PomoService(store)
 
 
+def format_duration(seconds: int) -> str:
+    minutes, remaining_seconds = divmod(seconds, 60)
+    if minutes == 0:
+        return f"{remaining_seconds}s"
+    return f"{minutes}m {remaining_seconds}s"
+
+
+def format_timestamp(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def format_status(status: StatusPayload) -> str:
-    return "\n".join(
-        [
-            f"state: {status.state}",
-            f"task_id: {status.task_id}",
-            f"task_title: {status.task_title}",
-            f"planned_minutes: {status.planned_minutes}",
-            f"remaining: {status.remaining_seconds}",
-            f"starts_at: {status.starts_at.isoformat()}",
-            f"ends_at: {status.ends_at.isoformat()}",
-            f"total_time_spent: {status.total_elapsed_seconds}",
-        ]
-    )
+    lines = [
+        f"state: {status.state}",
+        f"task_id: {status.task_id}",
+        f"task_title: {status.task_title}",
+        f"planned_minutes: {status.planned_minutes}",
+        f"remaining: {format_duration(status.remaining_seconds)}",
+        f"starts_at: {format_timestamp(status.starts_at)}",
+        f"scheduled_end_at: {format_timestamp(status.ends_at)}",
+        f"total_time_spent: {format_duration(status.total_elapsed_seconds)}",
+    ]
+    if status.completed_at is not None:
+        lines.append(f"completed_at: {format_timestamp(status.completed_at)}")
+    return "\n".join(lines)
 
 
 def format_summary(summary: SummaryPayload) -> str:
     lines = [
         f"tasks_completed: {summary.tasks_completed}",
-        f"total_time_spent_today: {summary.total_time_spent_today}",
+        f"total_time_spent_today: {format_duration(summary.total_time_spent_today)}",
     ]
     for task_title, elapsed_seconds in summary.time_spent_by_task.items():
-        lines.append(f"{task_title}: {elapsed_seconds}")
+        lines.append(f"{task_title}: {format_duration(elapsed_seconds)}")
     return "\n".join(lines)
 
 

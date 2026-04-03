@@ -87,7 +87,7 @@ class TimerTests(unittest.TestCase):
         )
         self.assertEqual(final_status.state, "completed")
         self.assertEqual(final_status.total_elapsed_seconds, 60)
-        self.assertIn("Task completed.", output.getvalue())
+        self.assertIn("\nTask completed.\n", output.getvalue())
 
     def test_session_closed_state_exits_countdown_cleanly(self) -> None:
         status = self.service.start_new_task(

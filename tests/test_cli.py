@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from pomo_cli.cli import build_parser, main
-from pomo_cli.service import PomoService
+from pomo_cli.cli import build_parser, format_status, main
+from pomo_cli.service import PomoService, StatusPayload
 from pomo_cli.store import PomoStore
 
 
@@ -97,6 +97,28 @@ class CliSmokeTests(unittest.TestCase):
     def test_complete_rejects_multiple_selectors(self) -> None:
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["complete", "--task-id", "123", "--latest"])
+
+    def test_format_status_renders_timestamps_to_seconds(self) -> None:
+        rendered = format_status(
+            StatusPayload(
+                state="completed",
+                task_id="ux-smoke-task",
+                task_title="ux smoke task",
+                planned_minutes=1,
+                starts_at=datetime(2026, 4, 3, 22, 10, 34, 635189),
+                ends_at=datetime(2026, 4, 3, 22, 11, 34, 635189),
+                remaining_seconds=0,
+                total_elapsed_seconds=10,
+                completed_at=datetime(2026, 4, 3, 22, 10, 45, 121273),
+            )
+        )
+
+        self.assertIn("starts_at: 2026-04-03 22:10:34", rendered)
+        self.assertIn("scheduled_end_at: 2026-04-03 22:11:34", rendered)
+        self.assertIn("completed_at: 2026-04-03 22:10:45", rendered)
+        self.assertNotIn(".635189", rendered)
+        self.assertNotIn(".121273", rendered)
+        self.assertNotIn("T22:10:34", rendered)
 
 
 class CliFlowTests(unittest.TestCase):
@@ -205,6 +227,9 @@ class CliFlowTests(unittest.TestCase):
         self.assertIn(f"task_id: {status.task_id}", result.stdout)
         self.assertIn("task_title: write 500-word essay", result.stdout)
         self.assertIn("planned_minutes: 25", result.stdout)
+        self.assertIn("scheduled_end_at:", result.stdout)
+        self.assertNotIn("\nends_at:", "\n" + result.stdout)
+        self.assertRegex(result.stdout, r"remaining: \d+m \d+s|remaining: \d+s")
 
     def test_complete_latest_and_summary_report_completed_work(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
@@ -236,10 +261,13 @@ class CliFlowTests(unittest.TestCase):
         self.assertIn("state: completed", complete_result.stdout)
         self.assertIn(f"task_id: {status.task_id}", complete_result.stdout)
         self.assertIn("task_title: write 500-word essay", complete_result.stdout)
+        self.assertIn("scheduled_end_at:", complete_result.stdout)
+        self.assertIn("completed_at:", complete_result.stdout)
+        self.assertIn("total_time_spent: 5m 0s", complete_result.stdout)
         self.assertEqual(summary_result.returncode, 0)
         self.assertIn("tasks_completed: 1", summary_result.stdout)
-        self.assertIn("total_time_spent_today: 300", summary_result.stdout)
-        self.assertIn("write 500-word essay: 300", summary_result.stdout)
+        self.assertIn("total_time_spent_today: 5m 0s", summary_result.stdout)
+        self.assertIn("write 500-word essay: 5m 0s", summary_result.stdout)
 
 
 if __name__ == "__main__":
