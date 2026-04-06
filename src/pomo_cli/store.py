@@ -203,6 +203,20 @@ class PomoStore:
             ).fetchone()
         return row is not None
 
+    def count_tasks_created_on_date(self, day: str) -> int:
+        start = f"{day}T00:00:00"
+        end = f"{day}T23:59:59.999999"
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE created_at BETWEEN ? AND ?
+                """,
+                (start, end),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
     def update_task_state(
         self,
         task_id: str,

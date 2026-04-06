@@ -30,6 +30,40 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(status.task_title, "write 500-word essay")
         self.assertEqual(status.planned_minutes, 30)
 
+    def test_start_new_task_uses_day_based_task_id_sequence(self) -> None:
+        first = self.service.start_new_task(
+            task_title="write 500-word essay",
+            planned_minutes=25,
+            now=datetime(2026, 4, 6, 9, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+
+        second = self.service.start_new_task(
+            task_title="review notes",
+            planned_minutes=15,
+            now=datetime(2026, 4, 6, 10, 0, 0),
+        )
+
+        self.assertEqual(first.task_id, "2026-0604-0001")
+        self.assertEqual(second.task_id, "2026-0604-0002")
+
+    def test_start_new_task_resets_day_based_sequence_on_a_new_day(self) -> None:
+        first = self.service.start_new_task(
+            task_title="write 500-word essay",
+            planned_minutes=25,
+            now=datetime(2026, 4, 6, 9, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+
+        second = self.service.start_new_task(
+            task_title="plan tomorrow",
+            planned_minutes=10,
+            now=datetime(2026, 4, 7, 9, 0, 0),
+        )
+
+        self.assertEqual(first.task_id, "2026-0604-0001")
+        self.assertEqual(second.task_id, "2026-0704-0001")
+
     def test_close_running_session_moves_task_to_session_closed(self) -> None:
         status = self.service.start_new_task(
             task_title="write 500-word essay",

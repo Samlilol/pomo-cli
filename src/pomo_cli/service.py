@@ -39,9 +39,7 @@ class PomoService:
         now: datetime,
     ) -> StatusPayload:
         self._assert_no_running_session()
-        task_id = self._slugify(task_title)
-        if self.store.task_exists(task_id):
-            task_id = f"{task_id}-{uuid4().hex[:6]}"
+        task_id = self._next_task_id(now)
         self.store.create_task_with_session(
             task_id=task_id,
             task_title=task_title,
@@ -194,6 +192,6 @@ class PomoService:
         if task.state == "completed":
             raise RuntimeError(message)
 
-    @staticmethod
-    def _slugify(task_title: str) -> str:
-        return "-".join(task_title.lower().strip().split())
+    def _next_task_id(self, now: datetime) -> str:
+        task_count = self.store.count_tasks_created_on_date(now.date().isoformat())
+        return f"{now.strftime('%Y-%d%m')}-{task_count + 1:04d}"
