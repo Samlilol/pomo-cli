@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from pomo_cli.models import TaskRecord
+from pomo_cli.models import SummaryTaskEntry, TaskRecord
 from pomo_cli.store import PomoStore
 
 
@@ -23,9 +23,10 @@ class StatusPayload:
 
 @dataclass(frozen=True)
 class SummaryPayload:
-    tasks_completed: int
+    tasks_worked_on_today: int
+    tasks_completed_today: int
     total_time_spent_today: int
-    time_spent_by_task: dict[str, int]
+    task_entries: list[SummaryTaskEntry]
 
 
 class PomoService:
@@ -39,9 +40,7 @@ class PomoService:
         now: datetime,
     ) -> StatusPayload:
         self._assert_no_running_session()
-        task_id = self._slugify(task_title)
-        if self.store.task_exists(task_id):
-            task_id = f"{task_id}-{uuid4().hex[:6]}"
+        task_id = self._next_task_id(now)
         self.store.create_task_with_session(
             task_id=task_id,
             task_title=task_title,
@@ -62,6 +61,26 @@ class PomoService:
     ) -> StatusPayload:
         self._assert_no_running_session()
         task = self._resolve_task(task_ref=task_ref, use_latest=use_latest)
+        self._assert_task_not_completed(task, "cannot start a completed task")
+        self.store.update_task_state_with_new_session(
+            task_id=task.task_id,
+            state="running",
+            updated_at=now,
+            completed_at=None,
+            session_id=uuid4().hex,
+            planned_minutes=planned_minutes,
+            started_at=now,
+        )
+        return self.get_status(now=now)
+
+    def continue_task(
+        self,
+        task_ref: str | None,
+        planned_minutes: int,
+        now: datetime,
+    ) -> StatusPayload:
+        self._assert_no_running_session()
+        task = self._resolve_task(task_ref=task_ref, use_latest=task_ref is None)
         self._assert_task_not_completed(task, "cannot start a completed task")
         self.store.update_task_state_with_new_session(
             task_id=task.task_id,
@@ -159,19 +178,14 @@ class PomoService:
         )
 
     def summary_for_date(self, day: str) -> SummaryPayload:
-        completed_tasks = self.store.get_completed_tasks_for_date(day)
-        time_spent_by_task: dict[str, int] = {}
-        for task in completed_tasks:
-            time_spent_by_task[task.task_title] = (
-                time_spent_by_task.get(task.task_title, 0)
-                + task.total_elapsed_seconds
-            )
+        task_entries = self.store.list_task_time_entries_for_date(day)
         return SummaryPayload(
-            tasks_completed=len(completed_tasks),
+            tasks_worked_on_today=len(task_entries),
+            tasks_completed_today=self.store.count_completed_tasks_for_date(day),
             total_time_spent_today=sum(
-                task.total_elapsed_seconds for task in completed_tasks
+                entry.elapsed_seconds for entry in task_entries
             ),
-            time_spent_by_task=time_spent_by_task,
+            task_entries=task_entries,
         )
 
     def _assert_no_running_session(self) -> None:
@@ -194,6 +208,6 @@ class PomoService:
         if task.state == "completed":
             raise RuntimeError(message)
 
-    @staticmethod
-    def _slugify(task_title: str) -> str:
-        return "-".join(task_title.lower().strip().split())
+    def _next_task_id(self, now: datetime) -> str:
+        task_count = self.store.count_tasks_created_on_date(now.date().isoformat())
+        return f"{now.strftime('%Y-%d%m')}-{task_count + 1:04d}"

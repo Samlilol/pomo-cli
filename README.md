@@ -15,9 +15,10 @@ If your checkout path does not contain spaces, a repo-local `.venv` also works. 
 ## Commands
 
     python3 -m pomo_cli start --task "write 500-word essay" --minutes 25
-    python3 -m pomo_cli start --task-id write-500-word-essay --minutes 25
-    python3 -m pomo_cli start --latest --minutes 25
-    python3 -m pomo_cli complete --task-id write-500-word-essay
+    python3 -m pomo_cli continue --minutes 25
+    python3 -m pomo_cli continue --task-id 2026-0604-0001 --minutes 25
+    python3 -m pomo_cli watch
+    python3 -m pomo_cli complete --task-id 2026-0604-0001
     python3 -m pomo_cli complete --latest
     python3 -m pomo_cli status
     python3 -m pomo_cli summary
@@ -28,15 +29,27 @@ If your checkout path does not contain spaces, a repo-local `.venv` also works. 
 
        pomo start --task "write 500-word essay" --minutes 1
 
-2. In a second terminal, inspect the active task:
+2. Leave the countdown without ending the task:
+
+       Ctrl+C
+
+3. In a second terminal, inspect the active task:
 
        pomo status
 
-3. Complete the task early from the second terminal:
+4. Re-attach to the timer later:
+
+       pomo watch
+
+5. Continue the latest task with a new session:
+
+       pomo continue --minutes 1
+
+6. Complete the task early from the second terminal:
 
        pomo complete --latest
 
-4. Inspect today’s completed-work summary:
+7. Inspect today’s worked-time summary:
 
        pomo summary
 

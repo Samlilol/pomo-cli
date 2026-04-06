@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from pomo_cli.models import SessionRecord, TaskRecord
+from pomo_cli.models import SessionRecord, SummaryTaskEntry, TaskRecord
 
 
 class PomoStore:
@@ -203,6 +203,20 @@ class PomoStore:
             ).fetchone()
         return row is not None
 
+    def count_tasks_created_on_date(self, day: str) -> int:
+        start = f"{day}T00:00:00"
+        end = f"{day}T23:59:59.999999"
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE created_at BETWEEN ? AND ?
+                """,
+                (start, end),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
     def update_task_state(
         self,
         task_id: str,
@@ -364,3 +378,41 @@ class PomoStore:
             )
             for row in rows
         ]
+
+    def list_task_time_entries_for_date(self, day: str) -> list[SummaryTaskEntry]:
+        start = f"{day}T00:00:00"
+        end = f"{day}T23:59:59.999999"
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT tasks.task_id, tasks.task_title, SUM(sessions.elapsed_seconds)
+                FROM sessions
+                JOIN tasks ON tasks.task_id = sessions.task_id
+                WHERE sessions.ended_at BETWEEN ? AND ?
+                GROUP BY tasks.task_id, tasks.task_title
+                ORDER BY MIN(sessions.ended_at) ASC
+                """,
+                (start, end),
+            ).fetchall()
+        return [
+            SummaryTaskEntry(
+                task_id=row[0],
+                task_title=row[1],
+                elapsed_seconds=row[2],
+            )
+            for row in rows
+        ]
+
+    def count_completed_tasks_for_date(self, day: str) -> int:
+        start = f"{day}T00:00:00"
+        end = f"{day}T23:59:59.999999"
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE completed_at BETWEEN ? AND ?
+                """,
+                (start, end),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0

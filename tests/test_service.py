@@ -30,6 +30,40 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(status.task_title, "write 500-word essay")
         self.assertEqual(status.planned_minutes, 30)
 
+    def test_start_new_task_uses_day_based_task_id_sequence(self) -> None:
+        first = self.service.start_new_task(
+            task_title="write 500-word essay",
+            planned_minutes=25,
+            now=datetime(2026, 4, 6, 9, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+
+        second = self.service.start_new_task(
+            task_title="review notes",
+            planned_minutes=15,
+            now=datetime(2026, 4, 6, 10, 0, 0),
+        )
+
+        self.assertEqual(first.task_id, "2026-0604-0001")
+        self.assertEqual(second.task_id, "2026-0604-0002")
+
+    def test_start_new_task_resets_day_based_sequence_on_a_new_day(self) -> None:
+        first = self.service.start_new_task(
+            task_title="write 500-word essay",
+            planned_minutes=25,
+            now=datetime(2026, 4, 6, 9, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+
+        second = self.service.start_new_task(
+            task_title="plan tomorrow",
+            planned_minutes=10,
+            now=datetime(2026, 4, 7, 9, 0, 0),
+        )
+
+        self.assertEqual(first.task_id, "2026-0604-0001")
+        self.assertEqual(second.task_id, "2026-0704-0001")
+
     def test_close_running_session_moves_task_to_session_closed(self) -> None:
         status = self.service.start_new_task(
             task_title="write 500-word essay",
@@ -78,7 +112,8 @@ class ServiceTests(unittest.TestCase):
 
         summary = self.service.summary_for_date(day="2026-04-03")
 
-        self.assertEqual(summary.tasks_completed, 1)
+        self.assertEqual(summary.tasks_worked_on_today, 1)
+        self.assertEqual(summary.tasks_completed_today, 1)
         self.assertEqual(summary.total_time_spent_today, 15 * 60)
 
     def test_latest_resolves_most_recent_task(self) -> None:
@@ -103,6 +138,23 @@ class ServiceTests(unittest.TestCase):
 
         self.assertEqual(completed.task_id, second.task_id)
         self.assertEqual(completed.total_elapsed_seconds, (25 + 10) * 60)
+
+    def test_continue_task_uses_latest_task_when_task_id_is_omitted(self) -> None:
+        first = self.service.start_new_task(
+            task_title="write draft",
+            planned_minutes=25,
+            now=datetime(2026, 4, 6, 9, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+
+        continued = self.service.continue_task(
+            task_ref=None,
+            planned_minutes=10,
+            now=datetime(2026, 4, 6, 10, 0, 0),
+        )
+
+        self.assertEqual(continued.task_id, first.task_id)
+        self.assertEqual(continued.planned_minutes, 10)
 
     def test_start_new_task_rolls_back_if_session_insert_fails(self) -> None:
         with self.store._connect() as connection:
@@ -153,9 +205,48 @@ class ServiceTests(unittest.TestCase):
 
         summary = self.service.summary_for_date(day="2026-04-02")
 
-        self.assertEqual(summary.tasks_completed, 2)
+        self.assertEqual(summary.tasks_worked_on_today, 2)
+        self.assertEqual(summary.tasks_completed_today, 2)
         self.assertEqual(summary.total_time_spent_today, 40 * 60)
-        self.assertEqual(summary.time_spent_by_task, {"write 500-word essay": 40 * 60})
+        self.assertEqual(
+            [(entry.task_id, entry.task_title, entry.elapsed_seconds) for entry in summary.task_entries],
+            [
+                (first.task_id, "write 500-word essay", 25 * 60),
+                (second.task_id, "write 500-word essay", 15 * 60),
+            ],
+        )
+
+    def test_summary_reports_worked_today_and_completed_today_separately(self) -> None:
+        first = self.service.start_new_task(
+            task_title="write draft",
+            planned_minutes=25,
+            now=datetime(2026, 4, 6, 9, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+
+        second = self.service.start_new_task(
+            task_title="review notes",
+            planned_minutes=15,
+            now=datetime(2026, 4, 6, 10, 0, 0),
+        )
+        self.service.complete_task(
+            task_ref=second.task_id,
+            use_latest=False,
+            now=datetime(2026, 4, 6, 10, 15, 0),
+        )
+
+        summary = self.service.summary_for_date("2026-04-06")
+
+        self.assertEqual(summary.tasks_worked_on_today, 2)
+        self.assertEqual(summary.tasks_completed_today, 1)
+        self.assertEqual(summary.total_time_spent_today, 40 * 60)
+        self.assertEqual(
+            [(entry.task_id, entry.task_title, entry.elapsed_seconds) for entry in summary.task_entries],
+            [
+                (first.task_id, "write draft", 25 * 60),
+                (second.task_id, "review notes", 15 * 60),
+            ],
+        )
 
     def test_start_existing_task_rejects_completed_task(self) -> None:
         status = self.service.start_new_task(

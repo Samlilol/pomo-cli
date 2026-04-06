@@ -87,6 +87,34 @@ class StoreTests(unittest.TestCase):
                 started_at=datetime(2026, 4, 2, 10, 2, 0),
             )
 
+    def test_list_task_time_entries_for_date_returns_finalized_session_totals(self) -> None:
+        self.store.initialize()
+        self.store.create_task_with_session(
+            task_id="2026-0604-0001",
+            task_title="write draft",
+            state="running",
+            created_at=datetime(2026, 4, 6, 9, 0, 0),
+            session_id="session-1",
+            planned_minutes=25,
+            started_at=datetime(2026, 4, 6, 9, 0, 0),
+        )
+        self.store.finalize_session(
+            task_id="2026-0604-0001",
+            session_id="session-1",
+            ended_at=datetime(2026, 4, 6, 9, 25, 0),
+            elapsed_seconds=25 * 60,
+            state="session_closed",
+            updated_at=datetime(2026, 4, 6, 9, 25, 0),
+            completed_at=None,
+        )
+
+        entries = self.store.list_task_time_entries_for_date("2026-04-06")
+
+        self.assertEqual(
+            [(entry.task_id, entry.task_title, entry.elapsed_seconds) for entry in entries],
+            [("2026-0604-0001", "write draft", 25 * 60)],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
