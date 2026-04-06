@@ -73,6 +73,26 @@ class PomoService:
         )
         return self.get_status(now=now)
 
+    def continue_task(
+        self,
+        task_ref: str | None,
+        planned_minutes: int,
+        now: datetime,
+    ) -> StatusPayload:
+        self._assert_no_running_session()
+        task = self._resolve_task(task_ref=task_ref, use_latest=task_ref is None)
+        self._assert_task_not_completed(task, "cannot start a completed task")
+        self.store.update_task_state_with_new_session(
+            task_id=task.task_id,
+            state="running",
+            updated_at=now,
+            completed_at=None,
+            session_id=uuid4().hex,
+            planned_minutes=planned_minutes,
+            started_at=now,
+        )
+        return self.get_status(now=now)
+
     def close_active_session(self, now: datetime) -> StatusPayload:
         session = self.store.get_active_session()
         if session is None:

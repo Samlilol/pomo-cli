@@ -209,14 +209,13 @@ class CliFlowTests(unittest.TestCase):
         self.assertIn("task_title: write 500-word essay", stdout.getvalue())
         self.assertIn("00:00", stdout.getvalue())
 
-    def test_start_interrupt_closes_the_session(self) -> None:
+    def test_start_interrupt_leaves_the_session_running(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
             stdout = io.StringIO()
             stderr = io.StringIO()
             ticks = iter(
                 [
                     datetime(2026, 4, 2, 14, 0, 0),
-                    datetime(2026, 4, 2, 14, 0, 5),
                     datetime(2026, 4, 2, 14, 0, 5),
                 ]
             )
@@ -234,9 +233,90 @@ class CliFlowTests(unittest.TestCase):
             final_status = service.get_status(now=datetime(2026, 4, 2, 14, 0, 5))
 
         self.assertEqual(exit_code, 130)
-        self.assertEqual(final_status.state, "session_closed")
-        self.assertEqual(final_status.total_elapsed_seconds, 5)
+        self.assertEqual(final_status.state, "running")
+        self.assertEqual(final_status.total_elapsed_seconds, 0)
         self.assertIn("state: running", stdout.getvalue())
+
+    def test_watch_interrupt_leaves_the_session_running(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            status = service.start_new_task(
+                task_title="watch me",
+                planned_minutes=25,
+                now=datetime(2026, 4, 6, 14, 0, 0),
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            ticks = iter(
+                [
+                    datetime(2026, 4, 6, 14, 0, 0),
+                    datetime(2026, 4, 6, 14, 0, 5),
+                ]
+            )
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["watch"],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: next(ticks),
+                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+                )
+
+            refreshed = service.get_task_status(
+                status.task_id,
+                now=datetime(2026, 4, 6, 14, 0, 5),
+            )
+
+        self.assertEqual(exit_code, 130)
+        self.assertEqual(refreshed.state, "running")
+
+    def test_continue_without_task_id_starts_a_new_session_for_the_latest_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            first = service.start_new_task(
+                task_title="write draft",
+                planned_minutes=25,
+                now=datetime(2026, 4, 6, 9, 0, 0),
+            )
+            service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            ticks = iter(
+                [
+                    datetime(2026, 4, 6, 10, 0, 0),
+                    datetime(2026, 4, 6, 10, 0, 5),
+                ]
+            )
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["continue", "--minutes", "10"],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: next(ticks),
+                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+                )
+
+            refreshed = service.get_status(now=datetime(2026, 4, 6, 10, 0, 5))
+
+        self.assertEqual(exit_code, 130)
+        self.assertEqual(refreshed.task_id, first.task_id)
+        self.assertEqual(refreshed.state, "running")
+        self.assertIn(f"task_id: {first.task_id}", stdout.getvalue())
+
+    def test_watch_returns_error_when_no_session_is_running(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(["watch"], stdout=stdout, stderr=stderr)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("no active session", stderr.getvalue())
 
     def test_status_returns_error_when_no_task_is_tracked(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:

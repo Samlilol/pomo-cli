@@ -138,6 +138,23 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(completed.task_id, second.task_id)
         self.assertEqual(completed.total_elapsed_seconds, (25 + 10) * 60)
 
+    def test_continue_task_uses_latest_task_when_task_id_is_omitted(self) -> None:
+        first = self.service.start_new_task(
+            task_title="write draft",
+            planned_minutes=25,
+            now=datetime(2026, 4, 6, 9, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+
+        continued = self.service.continue_task(
+            task_ref=None,
+            planned_minutes=10,
+            now=datetime(2026, 4, 6, 10, 0, 0),
+        )
+
+        self.assertEqual(continued.task_id, first.task_id)
+        self.assertEqual(continued.planned_minutes, 10)
+
     def test_start_new_task_rolls_back_if_session_insert_fails(self) -> None:
         with self.store._connect() as connection:
             connection.execute(

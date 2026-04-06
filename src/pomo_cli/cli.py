@@ -91,6 +91,28 @@ def format_summary(summary: SummaryPayload) -> str:
     return "\n".join(lines)
 
 
+def run_watch_loop(
+    service: PomoService,
+    task_id: str,
+    stdout: TextIO,
+    now_fn: Callable[[], datetime],
+    sleep_fn: Callable[[float], None],
+) -> int:
+    try:
+        run_countdown(
+            service=service,
+            task_id=task_id,
+            stream=stdout,
+            now_fn=now_fn,
+            sleep_fn=sleep_fn,
+        )
+    except KeyboardInterrupt:
+        stdout.write("\n")
+        stdout.flush()
+        return 130
+    return 0
+
+
 def main(
     argv: list[str] | None = None,
     stdout: TextIO | None = None,
@@ -109,37 +131,42 @@ def main(
     if args.command == "start":
         current_time = now_fn()
         try:
-            if args.task is not None:
-                status = service.start_new_task(
-                    task_title=args.task,
-                    planned_minutes=args.minutes,
-                    now=current_time,
-                )
-            else:
-                status = service.start_existing_task(
-                    task_ref=args.task_id,
-                    use_latest=args.latest,
-                    planned_minutes=args.minutes,
-                    now=current_time,
-                )
+            status = service.start_new_task(
+                task_title=args.task,
+                planned_minutes=args.minutes,
+                now=current_time,
+            )
         except (RuntimeError, KeyError) as error:
             print(str(error), file=stderr)
             return 1
         print(format_status(status), file=stdout)
+        return run_watch_loop(service, status.task_id, stdout, now_fn, sleep_fn)
+
+    if args.command == "continue":
         try:
-            run_countdown(
-                service=service,
-                task_id=status.task_id,
-                stream=stdout,
-                now_fn=now_fn,
-                sleep_fn=sleep_fn,
+            status = service.continue_task(
+                task_ref=args.task_id,
+                planned_minutes=args.minutes,
+                now=now_fn(),
             )
-        except KeyboardInterrupt:
-            active_session = service.store.get_active_session()
-            if active_session is not None and active_session.task_id == status.task_id:
-                service.close_active_session(now=now_fn())
-            return 130
-        return 0
+        except (RuntimeError, KeyError) as error:
+            print(str(error), file=stderr)
+            return 1
+        print(format_status(status), file=stdout)
+        return run_watch_loop(service, status.task_id, stdout, now_fn, sleep_fn)
+
+    if args.command == "watch":
+        active_session = service.store.get_active_session()
+        if active_session is None:
+            print("no active session", file=stderr)
+            return 1
+        return run_watch_loop(
+            service,
+            active_session.task_id,
+            stdout,
+            now_fn,
+            sleep_fn,
+        )
 
     if args.command == "status":
         try:
