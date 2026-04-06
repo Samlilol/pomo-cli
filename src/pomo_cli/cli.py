@@ -24,17 +24,19 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     start_parser = subparsers.add_parser("start")
-    start_group = start_parser.add_mutually_exclusive_group(required=True)
-    start_group.add_argument("--task")
-    start_group.add_argument("--task-id")
-    start_group.add_argument("--latest", action="store_true")
+    start_parser.add_argument("--task", required=True)
     start_parser.add_argument("--minutes", type=positive_int, required=True)
+
+    continue_parser = subparsers.add_parser("continue")
+    continue_parser.add_argument("--task-id")
+    continue_parser.add_argument("--minutes", type=positive_int, required=True)
 
     complete_parser = subparsers.add_parser("complete")
     complete_group = complete_parser.add_mutually_exclusive_group(required=True)
     complete_group.add_argument("--task-id")
     complete_group.add_argument("--latest", action="store_true")
 
+    subparsers.add_parser("watch")
     subparsers.add_parser("status")
     subparsers.add_parser("summary")
     return parser
@@ -67,7 +69,6 @@ def format_status(status: StatusPayload) -> str:
         f"task_id: {status.task_id}",
         f"task_title: {status.task_title}",
         f"planned_minutes: {status.planned_minutes}",
-        f"remaining: {format_duration(status.remaining_seconds)}",
         f"starts_at: {format_timestamp(status.starts_at)}",
         f"scheduled_end_at: {format_timestamp(status.ends_at)}",
         f"total_time_spent: {format_duration(status.total_elapsed_seconds)}",
@@ -79,11 +80,14 @@ def format_status(status: StatusPayload) -> str:
 
 def format_summary(summary: SummaryPayload) -> str:
     lines = [
-        f"tasks_completed: {summary.tasks_completed}",
+        f"tasks_worked_on_today: {summary.tasks_worked_on_today}",
+        f"tasks_completed_today: {summary.tasks_completed_today}",
         f"total_time_spent_today: {format_duration(summary.total_time_spent_today)}",
     ]
-    for task_title, elapsed_seconds in summary.time_spent_by_task.items():
-        lines.append(f"{task_title}: {format_duration(elapsed_seconds)}")
+    for entry in summary.task_entries:
+        lines.append(
+            f"{entry.task_id} {entry.task_title}: {format_duration(entry.elapsed_seconds)}"
+        )
     return "\n".join(lines)
 
 

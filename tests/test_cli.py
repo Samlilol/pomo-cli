@@ -8,8 +8,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from pomo_cli.cli import build_parser, format_status, main
-from pomo_cli.service import PomoService, StatusPayload
+from pomo_cli.cli import build_parser, format_status, format_summary, main
+from pomo_cli.models import SummaryTaskEntry
+from pomo_cli.service import PomoService, StatusPayload, SummaryPayload
 from pomo_cli.store import PomoStore
 
 
@@ -41,31 +42,30 @@ class CliSmokeTests(unittest.TestCase):
 
         self.assertEqual(args.command, "summary")
 
+    def test_watch_parses(self) -> None:
+        args = build_parser().parse_args(["watch"])
+
+        self.assertEqual(args.command, "watch")
+
     def test_start_with_task_parses(self) -> None:
         args = build_parser().parse_args(["start", "--task", "Write tests", "--minutes", "25"])
 
         self.assertEqual(args.command, "start")
         self.assertEqual(args.task, "Write tests")
-        self.assertIsNone(args.task_id)
-        self.assertFalse(args.latest)
         self.assertEqual(args.minutes, 25)
 
-    def test_start_with_task_id_parses(self) -> None:
-        args = build_parser().parse_args(["start", "--task-id", "123", "--minutes", "25"])
+    def test_continue_without_task_id_parses(self) -> None:
+        args = build_parser().parse_args(["continue", "--minutes", "25"])
 
-        self.assertEqual(args.command, "start")
-        self.assertIsNone(args.task)
-        self.assertEqual(args.task_id, "123")
-        self.assertFalse(args.latest)
+        self.assertEqual(args.command, "continue")
+        self.assertIsNone(args.task_id)
         self.assertEqual(args.minutes, 25)
 
-    def test_start_latest_parses(self) -> None:
-        args = build_parser().parse_args(["start", "--latest", "--minutes", "25"])
+    def test_continue_with_task_id_parses(self) -> None:
+        args = build_parser().parse_args(["continue", "--task-id", "2026-0604-0001", "--minutes", "25"])
 
-        self.assertEqual(args.command, "start")
-        self.assertIsNone(args.task)
-        self.assertIsNone(args.task_id)
-        self.assertTrue(args.latest)
+        self.assertEqual(args.command, "continue")
+        self.assertEqual(args.task_id, "2026-0604-0001")
         self.assertEqual(args.minutes, 25)
 
     def test_complete_with_task_id_parses(self) -> None:
@@ -85,6 +85,10 @@ class CliSmokeTests(unittest.TestCase):
     def test_start_rejects_missing_selector(self) -> None:
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["start", "--minutes", "25"])
+
+    def test_start_rejects_task_id_selector(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["start", "--task-id", "123", "--minutes", "25"])
 
     def test_start_rejects_zero_minutes(self) -> None:
         with self.assertRaises(SystemExit):
@@ -119,6 +123,48 @@ class CliSmokeTests(unittest.TestCase):
         self.assertNotIn(".635189", rendered)
         self.assertNotIn(".121273", rendered)
         self.assertNotIn("T22:10:34", rendered)
+
+    def test_format_status_omits_remaining(self) -> None:
+        rendered = format_status(
+            StatusPayload(
+                state="running",
+                task_id="2026-0604-0001",
+                task_title="write draft",
+                planned_minutes=25,
+                starts_at=datetime(2026, 4, 6, 9, 0, 0),
+                ends_at=datetime(2026, 4, 6, 9, 25, 0),
+                remaining_seconds=10,
+                total_elapsed_seconds=0,
+                completed_at=None,
+            )
+        )
+
+        self.assertNotIn("remaining:", rendered)
+
+    def test_format_summary_renders_worked_and_completed_counts(self) -> None:
+        rendered = format_summary(
+            SummaryPayload(
+                tasks_worked_on_today=2,
+                tasks_completed_today=1,
+                total_time_spent_today=40 * 60,
+                task_entries=[
+                    SummaryTaskEntry(
+                        task_id="2026-0604-0001",
+                        task_title="write draft",
+                        elapsed_seconds=25 * 60,
+                    ),
+                    SummaryTaskEntry(
+                        task_id="2026-0604-0002",
+                        task_title="review notes",
+                        elapsed_seconds=15 * 60,
+                    ),
+                ],
+            )
+        )
+
+        self.assertIn("tasks_worked_on_today: 2", rendered)
+        self.assertIn("tasks_completed_today: 1", rendered)
+        self.assertIn("2026-0604-0001 write draft: 25m 0s", rendered)
 
 
 class CliFlowTests(unittest.TestCase):
@@ -268,6 +314,29 @@ class CliFlowTests(unittest.TestCase):
         self.assertIn("tasks_completed: 1", summary_result.stdout)
         self.assertIn("total_time_spent_today: 5m 0s", summary_result.stdout)
         self.assertIn("write 500-word essay: 5m 0s", summary_result.stdout)
+
+    def test_summary_reports_worked_today_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            status = service.start_new_task(
+                task_title="write 500-word essay",
+                planned_minutes=25,
+                now=datetime(2026, 4, 6, 9, 0, 0),
+            )
+            service.close_active_session(now=datetime(2026, 4, 6, 9, 5, 0))
+
+            summary_result = subprocess.run(
+                [sys.executable, "-m", "pomo_cli", "summary"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                env=self._base_env(temp_home),
+            )
+
+        self.assertEqual(summary_result.returncode, 0)
+        self.assertIn("tasks_worked_on_today: 1", summary_result.stdout)
+        self.assertIn("tasks_completed_today: 0", summary_result.stdout)
+        self.assertIn(f"{status.task_id} write 500-word essay: 5m 0s", summary_result.stdout)
 
 
 if __name__ == "__main__":
