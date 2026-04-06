@@ -112,7 +112,8 @@ class ServiceTests(unittest.TestCase):
 
         summary = self.service.summary_for_date(day="2026-04-03")
 
-        self.assertEqual(summary.tasks_completed, 1)
+        self.assertEqual(summary.tasks_worked_on_today, 1)
+        self.assertEqual(summary.tasks_completed_today, 1)
         self.assertEqual(summary.total_time_spent_today, 15 * 60)
 
     def test_latest_resolves_most_recent_task(self) -> None:
@@ -204,9 +205,16 @@ class ServiceTests(unittest.TestCase):
 
         summary = self.service.summary_for_date(day="2026-04-02")
 
-        self.assertEqual(summary.tasks_completed, 2)
+        self.assertEqual(summary.tasks_worked_on_today, 2)
+        self.assertEqual(summary.tasks_completed_today, 2)
         self.assertEqual(summary.total_time_spent_today, 40 * 60)
-        self.assertEqual(summary.time_spent_by_task, {"write 500-word essay": 40 * 60})
+        self.assertEqual(
+            [(entry.task_id, entry.task_title, entry.elapsed_seconds) for entry in summary.task_entries],
+            [
+                (first.task_id, "write 500-word essay", 25 * 60),
+                (second.task_id, "write 500-word essay", 15 * 60),
+            ],
+        )
 
     def test_summary_reports_worked_today_and_completed_today_separately(self) -> None:
         first = self.service.start_new_task(

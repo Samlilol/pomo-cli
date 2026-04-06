@@ -28,7 +28,9 @@ class CliSmokeTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("start", result.stdout)
+        self.assertIn("continue", result.stdout)
         self.assertIn("complete", result.stdout)
+        self.assertIn("watch", result.stdout)
         self.assertIn("status", result.stdout)
         self.assertIn("summary", result.stdout)
 
@@ -355,7 +357,7 @@ class CliFlowTests(unittest.TestCase):
         self.assertIn("planned_minutes: 25", result.stdout)
         self.assertIn("scheduled_end_at:", result.stdout)
         self.assertNotIn("\nends_at:", "\n" + result.stdout)
-        self.assertRegex(result.stdout, r"remaining: \d+m \d+s|remaining: \d+s")
+        self.assertNotIn("remaining:", result.stdout)
 
     def test_complete_latest_and_summary_report_completed_work(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
@@ -391,9 +393,10 @@ class CliFlowTests(unittest.TestCase):
         self.assertIn("completed_at:", complete_result.stdout)
         self.assertIn("total_time_spent: 5m 0s", complete_result.stdout)
         self.assertEqual(summary_result.returncode, 0)
-        self.assertIn("tasks_completed: 1", summary_result.stdout)
+        self.assertIn("tasks_worked_on_today: 1", summary_result.stdout)
+        self.assertIn("tasks_completed_today: 1", summary_result.stdout)
         self.assertIn("total_time_spent_today: 5m 0s", summary_result.stdout)
-        self.assertIn("write 500-word essay: 5m 0s", summary_result.stdout)
+        self.assertIn(f"{status.task_id} write 500-word essay: 5m 0s", summary_result.stdout)
 
     def test_summary_reports_worked_today_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
