@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from pomo_cli.models import TaskRecord
+from pomo_cli.models import SummaryTaskEntry, TaskRecord
 from pomo_cli.store import PomoStore
 
 
@@ -23,9 +23,10 @@ class StatusPayload:
 
 @dataclass(frozen=True)
 class SummaryPayload:
-    tasks_completed: int
+    tasks_worked_on_today: int
+    tasks_completed_today: int
     total_time_spent_today: int
-    time_spent_by_task: dict[str, int]
+    task_entries: list[SummaryTaskEntry]
 
 
 class PomoService:
@@ -157,19 +158,14 @@ class PomoService:
         )
 
     def summary_for_date(self, day: str) -> SummaryPayload:
-        completed_tasks = self.store.get_completed_tasks_for_date(day)
-        time_spent_by_task: dict[str, int] = {}
-        for task in completed_tasks:
-            time_spent_by_task[task.task_title] = (
-                time_spent_by_task.get(task.task_title, 0)
-                + task.total_elapsed_seconds
-            )
+        task_entries = self.store.list_task_time_entries_for_date(day)
         return SummaryPayload(
-            tasks_completed=len(completed_tasks),
+            tasks_worked_on_today=len(task_entries),
+            tasks_completed_today=self.store.count_completed_tasks_for_date(day),
             total_time_spent_today=sum(
-                task.total_elapsed_seconds for task in completed_tasks
+                entry.elapsed_seconds for entry in task_entries
             ),
-            time_spent_by_task=time_spent_by_task,
+            task_entries=task_entries,
         )
 
     def _assert_no_running_session(self) -> None:

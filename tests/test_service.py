@@ -191,6 +191,38 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(summary.total_time_spent_today, 40 * 60)
         self.assertEqual(summary.time_spent_by_task, {"write 500-word essay": 40 * 60})
 
+    def test_summary_reports_worked_today_and_completed_today_separately(self) -> None:
+        first = self.service.start_new_task(
+            task_title="write draft",
+            planned_minutes=25,
+            now=datetime(2026, 4, 6, 9, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+
+        second = self.service.start_new_task(
+            task_title="review notes",
+            planned_minutes=15,
+            now=datetime(2026, 4, 6, 10, 0, 0),
+        )
+        self.service.complete_task(
+            task_ref=second.task_id,
+            use_latest=False,
+            now=datetime(2026, 4, 6, 10, 15, 0),
+        )
+
+        summary = self.service.summary_for_date("2026-04-06")
+
+        self.assertEqual(summary.tasks_worked_on_today, 2)
+        self.assertEqual(summary.tasks_completed_today, 1)
+        self.assertEqual(summary.total_time_spent_today, 40 * 60)
+        self.assertEqual(
+            [(entry.task_id, entry.task_title, entry.elapsed_seconds) for entry in summary.task_entries],
+            [
+                (first.task_id, "write draft", 25 * 60),
+                (second.task_id, "review notes", 15 * 60),
+            ],
+        )
+
     def test_start_existing_task_rejects_completed_task(self) -> None:
         status = self.service.start_new_task(
             task_title="write 500-word essay",

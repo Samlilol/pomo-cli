@@ -23,3 +23,10 @@ class SessionRecord:
     started_at: datetime
     ended_at: datetime | None
     elapsed_seconds: int
+
+
+@dataclass(frozen=True)
+class SummaryTaskEntry:
+    task_id: str
+    task_title: str
+    elapsed_seconds: int
