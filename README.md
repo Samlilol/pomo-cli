@@ -12,8 +12,6 @@ python3 setup.py develop
 PYTHONPATH=src python3 -m unittest -v
 ```
 
-> If your checkout path contains spaces (e.g. `/Users/you/Desktop/Study Repo`), keep the venv at a path without spaces like `/tmp/pomo-cli-venv`. The generated `pomo` script needs a valid interpreter path.
-
 ## Commands
 
 ```bash
