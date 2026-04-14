@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from pomo_cli.models import SessionRecord, SummaryTaskEntry, TaskRecord
+from pomo_cli.models import BacklogEntry, SessionRecord, SummaryTaskEntry, TaskRecord
 
 
 class PomoStore:
@@ -28,7 +28,11 @@ class PomoStore:
                     total_elapsed_seconds INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    completed_at TEXT
+                    completed_at TEXT,
+                    estimate_minutes INTEGER,
+                    priority TEXT,
+                    source_parent_title TEXT,
+                    position INTEGER
                 )
                 """
             )
@@ -52,6 +56,21 @@ class PomoStore:
                 WHERE ended_at IS NULL
                 """
             )
+            self._ensure_task_columns(connection)
+
+    def _ensure_task_columns(self, connection: sqlite3.Connection) -> None:
+        rows = connection.execute("PRAGMA table_info(tasks)").fetchall()
+        existing_columns = {row[1] for row in rows}
+        for column_name, column_type in (
+            ("estimate_minutes", "INTEGER"),
+            ("priority", "TEXT"),
+            ("source_parent_title", "TEXT"),
+            ("position", "INTEGER"),
+        ):
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE tasks ADD COLUMN {column_name} {column_type}"
+                )
 
     def list_table_names(self) -> list[str]:
         with self._connect() as connection:
@@ -156,7 +175,8 @@ class PomoStore:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT task_id, task_title, state, total_elapsed_seconds, created_at, updated_at, completed_at
+                SELECT task_id, task_title, state, total_elapsed_seconds, created_at, updated_at, completed_at,
+                       estimate_minutes, priority, source_parent_title, position
                 FROM tasks
                 WHERE task_id = ?
                 """,
@@ -164,15 +184,7 @@ class PomoStore:
             ).fetchone()
         if row is None:
             raise KeyError(task_id)
-        return TaskRecord(
-            task_id=row[0],
-            task_title=row[1],
-            state=row[2],
-            total_elapsed_seconds=row[3],
-            created_at=datetime.fromisoformat(row[4]),
-            updated_at=datetime.fromisoformat(row[5]),
-            completed_at=datetime.fromisoformat(row[6]) if row[6] else None,
-        )
+        return self._task_record_from_row(row)
 
     def get_active_session(self) -> SessionRecord | None:
         with self._connect() as connection:
@@ -255,6 +267,58 @@ class PomoStore:
                 (elapsed_seconds, updated_at.isoformat(), task_id),
             )
 
+    def create_planned_tasks(self, planned_tasks: list[dict[str, object]]) -> None:
+        if not planned_tasks:
+            return
+
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO tasks (
+                    task_id, task_title, state, total_elapsed_seconds, created_at, updated_at, completed_at,
+                    estimate_minutes, priority, source_parent_title, position
+                )
+                VALUES (?, ?, 'planned', 0, ?, ?, NULL, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        task["task_id"],
+                        task["task_title"],
+                        task["created_at"].isoformat(),
+                        task["created_at"].isoformat(),
+                        task["estimate_minutes"],
+                        task["priority"],
+                        task["source_parent_title"],
+                        task["position"],
+                    )
+                    for task in planned_tasks
+                ],
+            )
+
+    def create_planned_task(
+        self,
+        task_id: str,
+        task_title: str,
+        created_at: datetime,
+        estimate_minutes: int,
+        priority: str,
+        source_parent_title: str | None,
+        position: int,
+    ) -> None:
+        self.create_planned_tasks(
+            [
+                {
+                    "task_id": task_id,
+                    "task_title": task_title,
+                    "created_at": created_at,
+                    "estimate_minutes": estimate_minutes,
+                    "priority": priority,
+                    "source_parent_title": source_parent_title,
+                    "position": position,
+                }
+            ]
+        )
+
     def close_session(
         self,
         session_id: str,
@@ -309,26 +373,62 @@ class PomoStore:
             )
 
     def get_latest_task(self) -> TaskRecord | None:
+        return self.get_latest_worked_task()
+
+    def get_latest_worked_task(self) -> TaskRecord | None:
         with self._connect() as connection:
             row = connection.execute(
                 """
-                SELECT task_id, task_title, state, total_elapsed_seconds, created_at, updated_at, completed_at
+                SELECT tasks.task_id, tasks.task_title, tasks.state, tasks.total_elapsed_seconds,
+                       tasks.created_at, tasks.updated_at, tasks.completed_at,
+                       tasks.estimate_minutes, tasks.priority, tasks.source_parent_title, tasks.position
                 FROM tasks
-                ORDER BY updated_at DESC
+                JOIN sessions ON sessions.task_id = tasks.task_id
+                GROUP BY tasks.task_id, tasks.task_title, tasks.state, tasks.total_elapsed_seconds,
+                         tasks.created_at, tasks.updated_at, tasks.completed_at,
+                         tasks.estimate_minutes, tasks.priority, tasks.source_parent_title, tasks.position
+                ORDER BY MAX(sessions.started_at) DESC, tasks.task_id DESC
                 LIMIT 1
                 """
             ).fetchone()
         if row is None:
             return None
-        return TaskRecord(
-            task_id=row[0],
-            task_title=row[1],
-            state=row[2],
-            total_elapsed_seconds=row[3],
-            created_at=datetime.fromisoformat(row[4]),
-            updated_at=datetime.fromisoformat(row[5]),
-            completed_at=datetime.fromisoformat(row[6]) if row[6] else None,
-        )
+        return self._task_record_from_row(row)
+
+    def get_latest_planned_task(self) -> TaskRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT task_id, task_title, state, total_elapsed_seconds, created_at, updated_at, completed_at,
+                       estimate_minutes, priority, source_parent_title, position
+                FROM tasks
+                WHERE state = 'planned'
+                ORDER BY created_at DESC, position DESC, task_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        return self._task_record_from_row(row)
+
+    def get_backlog_task_for_date_by_position(self, day: str, position: int) -> TaskRecord | None:
+        start = f"{day}T00:00:00"
+        end = f"{day}T23:59:59.999999"
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT task_id, task_title, state, total_elapsed_seconds, created_at, updated_at, completed_at,
+                       estimate_minutes, priority, source_parent_title, position
+                FROM tasks
+                WHERE created_at BETWEEN ? AND ? AND estimate_minutes IS NOT NULL AND position = ?
+                ORDER BY task_id ASC
+                LIMIT 1
+                """,
+                (start, end, position),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._task_record_from_row(row)
 
     def get_latest_session_for_task(self, task_id: str) -> SessionRecord | None:
         with self._connect() as connection:
@@ -359,25 +459,15 @@ class PomoStore:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT task_id, task_title, state, total_elapsed_seconds, created_at, updated_at, completed_at
+                SELECT task_id, task_title, state, total_elapsed_seconds, created_at, updated_at, completed_at,
+                       estimate_minutes, priority, source_parent_title, position
                 FROM tasks
                 WHERE state = 'completed' AND completed_at BETWEEN ? AND ?
                 ORDER BY completed_at ASC
                 """,
                 (start, end),
             ).fetchall()
-        return [
-            TaskRecord(
-                task_id=row[0],
-                task_title=row[1],
-                state=row[2],
-                total_elapsed_seconds=row[3],
-                created_at=datetime.fromisoformat(row[4]),
-                updated_at=datetime.fromisoformat(row[5]),
-                completed_at=datetime.fromisoformat(row[6]) if row[6] else None,
-            )
-            for row in rows
-        ]
+        return [self._task_record_from_row(row) for row in rows]
 
     def list_task_time_entries_for_date(self, day: str) -> list[SummaryTaskEntry]:
         start = f"{day}T00:00:00"
@@ -388,7 +478,7 @@ class PomoStore:
                 SELECT tasks.task_id, tasks.task_title, SUM(sessions.elapsed_seconds)
                 FROM sessions
                 JOIN tasks ON tasks.task_id = sessions.task_id
-                WHERE sessions.ended_at BETWEEN ? AND ?
+                WHERE sessions.ended_at BETWEEN ? AND ? AND sessions.elapsed_seconds > 0
                 GROUP BY tasks.task_id, tasks.task_title
                 ORDER BY MIN(sessions.ended_at) ASC
                 """,
@@ -403,6 +493,46 @@ class PomoStore:
             for row in rows
         ]
 
+    def list_backlog_entries_for_date(self, day: str) -> list[BacklogEntry]:
+        start = f"{day}T00:00:00"
+        end = f"{day}T23:59:59.999999"
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT position, task_id, task_title, estimate_minutes, priority, source_parent_title, state
+                FROM tasks
+                WHERE created_at BETWEEN ? AND ? AND estimate_minutes IS NOT NULL
+                ORDER BY position ASC, task_id ASC
+                """,
+                (start, end),
+            ).fetchall()
+        return [
+            BacklogEntry(
+                position=row[0],
+                task_id=row[1],
+                task_title=row[2],
+                estimate_minutes=row[3],
+                priority=row[4],
+                source_parent_title=row[5],
+                state=row[6],
+            )
+            for row in rows
+        ]
+
+    def count_backlog_entries_for_date(self, day: str) -> int:
+        start = f"{day}T00:00:00"
+        end = f"{day}T23:59:59.999999"
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE created_at BETWEEN ? AND ? AND estimate_minutes IS NOT NULL
+                """,
+                (start, end),
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
     def count_completed_tasks_for_date(self, day: str) -> int:
         start = f"{day}T00:00:00"
         end = f"{day}T23:59:59.999999"
@@ -416,3 +546,19 @@ class PomoStore:
                 (start, end),
             ).fetchone()
         return int(row[0]) if row is not None else 0
+
+    @staticmethod
+    def _task_record_from_row(row: tuple[object, ...]) -> TaskRecord:
+        return TaskRecord(
+            task_id=row[0],
+            task_title=row[1],
+            state=row[2],
+            total_elapsed_seconds=row[3],
+            created_at=datetime.fromisoformat(row[4]),
+            updated_at=datetime.fromisoformat(row[5]),
+            completed_at=datetime.fromisoformat(row[6]) if row[6] else None,
+            estimate_minutes=row[7],
+            priority=row[8],
+            source_parent_title=row[9],
+            position=row[10],
+        )

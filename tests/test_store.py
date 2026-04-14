@@ -115,6 +115,139 @@ class StoreTests(unittest.TestCase):
             [("2026-0604-0001", "write draft", 25 * 60)],
         )
 
+    def test_create_planned_tasks_round_trip_and_backlog_order(self) -> None:
+        self.store.initialize()
+        self.store.create_planned_tasks(
+            [
+                {
+                    "task_id": "2026-1004-0001",
+                    "task_title": "outline launch email",
+                    "created_at": datetime(2026, 4, 10, 9, 0, 0),
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                    "source_parent_title": "Launch prep",
+                    "position": 1,
+                },
+                {
+                    "task_id": "2026-1004-0002",
+                    "task_title": "draft changelog",
+                    "created_at": datetime(2026, 4, 10, 9, 0, 0),
+                    "estimate_minutes": 10,
+                    "priority": "medium",
+                    "source_parent_title": "Launch prep",
+                    "position": 2,
+                },
+            ]
+        )
+
+        first_task = self.store.get_task("2026-1004-0001")
+        entries = self.store.list_backlog_entries_for_date("2026-04-10")
+        latest_planned = self.store.get_latest_planned_task()
+        latest_worked = self.store.get_latest_worked_task()
+        first_session = self.store.get_latest_session_for_task("2026-1004-0001")
+
+        self.assertEqual(first_task.state, "planned")
+        self.assertEqual(first_task.estimate_minutes, 15)
+        self.assertEqual(first_task.priority, "high")
+        self.assertEqual(first_task.source_parent_title, "Launch prep")
+        self.assertEqual(first_task.position, 1)
+        self.assertIsNone(first_session)
+        self.assertIsNone(latest_worked)
+        self.assertIsNotNone(latest_planned)
+        self.assertEqual(latest_planned.task_id, "2026-1004-0002")
+        self.assertEqual(
+            [
+                (
+                    entry.position,
+                    entry.task_id,
+                    entry.task_title,
+                    entry.estimate_minutes,
+                    entry.priority,
+                    entry.source_parent_title,
+                    entry.state,
+                )
+                for entry in entries
+            ],
+            [
+                (1, "2026-1004-0001", "outline launch email", 15, "high", "Launch prep", "planned"),
+                (2, "2026-1004-0002", "draft changelog", 10, "medium", "Launch prep", "planned"),
+            ],
+        )
+
+    def test_get_latest_worked_task_ignores_planned_backlog_rows(self) -> None:
+        self.store.initialize()
+        self.store.create_task_with_session(
+            task_id="2026-1004-0001",
+            task_title="write draft",
+            state="running",
+            created_at=datetime(2026, 4, 10, 8, 0, 0),
+            session_id="session-1",
+            planned_minutes=25,
+            started_at=datetime(2026, 4, 10, 8, 0, 0),
+        )
+        self.store.finalize_session(
+            task_id="2026-1004-0001",
+            session_id="session-1",
+            ended_at=datetime(2026, 4, 10, 8, 25, 0),
+            elapsed_seconds=25 * 60,
+            state="session_closed",
+            updated_at=datetime(2026, 4, 10, 8, 25, 0),
+            completed_at=None,
+        )
+        self.store.create_planned_tasks(
+            [
+                {
+                    "task_id": "2026-1004-0002",
+                    "task_title": "outline launch email",
+                    "created_at": datetime(2026, 4, 10, 9, 0, 0),
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                    "source_parent_title": "Launch prep",
+                    "position": 1,
+                }
+            ]
+        )
+
+        latest_worked = self.store.get_latest_worked_task()
+
+        self.assertIsNotNone(latest_worked)
+        self.assertEqual(latest_worked.task_id, "2026-1004-0001")
+
+    def test_get_backlog_task_for_date_by_position_returns_matching_task(self) -> None:
+        self.store.initialize()
+        self.store.create_planned_tasks(
+            [
+                {
+                    "task_id": "2026-1004-0001",
+                    "task_title": "outline launch email",
+                    "created_at": datetime(2026, 4, 10, 9, 0, 0),
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                    "source_parent_title": "Launch prep",
+                    "position": 1,
+                },
+                {
+                    "task_id": "2026-1004-0002",
+                    "task_title": "draft changelog",
+                    "created_at": datetime(2026, 4, 10, 9, 0, 0),
+                    "estimate_minutes": 10,
+                    "priority": "medium",
+                    "source_parent_title": "Launch prep",
+                    "position": 2,
+                },
+            ]
+        )
+
+        first = self.store.get_backlog_task_for_date_by_position("2026-04-10", 1)
+        second = self.store.get_backlog_task_for_date_by_position("2026-04-10", 2)
+        missing = self.store.get_backlog_task_for_date_by_position("2026-04-10", 3)
+
+        self.assertIsNotNone(first)
+        self.assertEqual(first.task_id, "2026-1004-0001")
+        self.assertIsNotNone(second)
+        self.assertEqual(second.task_id, "2026-1004-0002")
+        self.assertIsNone(missing)
+
 
 if __name__ == "__main__":
     unittest.main()
