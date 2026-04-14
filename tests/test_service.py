@@ -156,6 +156,233 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(continued.task_id, first.task_id)
         self.assertEqual(continued.planned_minutes, 10)
 
+    def test_plan_tasks_creates_subtasks_with_metadata_in_stable_order(self) -> None:
+        planned_tasks = self.service.plan_tasks(
+            parent_title="Ship pomo update",
+            subtasks=[
+                {
+                    "task_title": "review failing tests",
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                },
+                {
+                    "task_title": "write release note",
+                    "estimate_minutes": 10,
+                    "priority": "medium",
+                },
+            ],
+            now=datetime(2026, 4, 10, 9, 0, 0),
+        )
+
+        backlog = self.service.backlog_for_date("2026-04-10")
+
+        self.assertEqual(
+            [(task.task_id, task.task_title, task.estimate_minutes, task.priority) for task in planned_tasks],
+            [
+                ("2026-1004-0001", "review failing tests", 15, "high"),
+                ("2026-1004-0002", "write release note", 10, "medium"),
+            ],
+        )
+        self.assertEqual(
+            [
+                (
+                    entry.position,
+                    entry.task_id,
+                    entry.task_title,
+                    entry.estimate_minutes,
+                    entry.priority,
+                    entry.source_parent_title,
+                    entry.state,
+                )
+                for entry in backlog
+            ],
+            [
+                (1, "2026-1004-0001", "review failing tests", 15, "high", "Ship pomo update", "planned"),
+                (2, "2026-1004-0002", "write release note", 10, "medium", "Ship pomo update", "planned"),
+            ],
+        )
+
+    def test_plan_tasks_is_atomic_when_a_later_subtask_is_invalid(self) -> None:
+        with self.assertRaisesRegex(ValueError, "priority must be one of"):
+            self.service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    },
+                    {
+                        "task_title": "write release note",
+                        "estimate_minutes": 10,
+                        "priority": "urgent",
+                    },
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )
+
+        self.assertEqual(self.service.backlog_for_date("2026-04-10"), [])
+
+    def test_continue_task_without_task_id_ignores_planned_tasks(self) -> None:
+        worked = self.service.start_new_task(
+            task_title="write draft",
+            planned_minutes=25,
+            now=datetime(2026, 4, 10, 8, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 10, 8, 25, 0))
+        self.service.plan_tasks(
+            parent_title="Ship pomo update",
+            subtasks=[
+                {
+                    "task_title": "review failing tests",
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                }
+            ],
+            now=datetime(2026, 4, 10, 9, 0, 0),
+        )
+
+        continued = self.service.continue_task(
+            task_ref=None,
+            planned_minutes=10,
+            now=datetime(2026, 4, 10, 9, 30, 0),
+        )
+
+        self.assertEqual(continued.task_id, worked.task_id)
+
+    def test_run_planned_task_uses_stored_estimate_by_default(self) -> None:
+        planned = self.service.plan_tasks(
+            parent_title="Ship pomo update",
+            subtasks=[
+                {
+                    "task_title": "review failing tests",
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                }
+            ],
+            now=datetime(2026, 4, 10, 9, 0, 0),
+        )[0]
+
+        running = self.service.run_planned_task(
+            task_ref=planned.task_id,
+            position=None,
+            planned_minutes=None,
+            now=datetime(2026, 4, 10, 9, 30, 0),
+        )
+
+        self.assertEqual(running.task_id, planned.task_id)
+        self.assertEqual(running.state, "running")
+        self.assertEqual(running.planned_minutes, 15)
+
+    def test_run_planned_task_by_position_resolves_today_backlog(self) -> None:
+        self.service.plan_tasks(
+            parent_title="Ship pomo update",
+            subtasks=[
+                {
+                    "task_title": "review failing tests",
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                },
+                {
+                    "task_title": "write release note",
+                    "estimate_minutes": 10,
+                    "priority": "medium",
+                },
+            ],
+            now=datetime(2026, 4, 10, 9, 0, 0),
+        )
+
+        running = self.service.run_planned_task(
+            task_ref=None,
+            position=2,
+            planned_minutes=20,
+            now=datetime(2026, 4, 10, 9, 30, 0),
+        )
+
+        self.assertEqual(running.task_title, "write release note")
+        self.assertEqual(running.planned_minutes, 20)
+
+    def test_run_planned_task_rejects_non_planned_task(self) -> None:
+        worked = self.service.start_new_task(
+            task_title="write draft",
+            planned_minutes=25,
+            now=datetime(2026, 4, 10, 8, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 10, 8, 25, 0))
+
+        with self.assertRaisesRegex(RuntimeError, "run only works for planned backlog tasks"):
+            self.service.run_planned_task(
+                task_ref=worked.task_id,
+                position=None,
+                planned_minutes=None,
+                now=datetime(2026, 4, 10, 9, 30, 0),
+            )
+
+    def test_complete_latest_ignores_planned_tasks(self) -> None:
+        worked = self.service.start_new_task(
+            task_title="write draft",
+            planned_minutes=25,
+            now=datetime(2026, 4, 10, 8, 0, 0),
+        )
+        self.service.close_active_session(now=datetime(2026, 4, 10, 8, 25, 0))
+        self.service.plan_tasks(
+            parent_title="Ship pomo update",
+            subtasks=[
+                {
+                    "task_title": "review failing tests",
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                }
+            ],
+            now=datetime(2026, 4, 10, 9, 0, 0),
+        )
+
+        completed = self.service.complete_task(
+            task_ref=None,
+            use_latest=True,
+            now=datetime(2026, 4, 10, 9, 30, 0),
+        )
+
+        self.assertEqual(completed.task_id, worked.task_id)
+        self.assertEqual(completed.state, "completed")
+
+    def test_plan_tasks_rejects_invalid_priority(self) -> None:
+        with self.assertRaisesRegex(ValueError, "priority must be one of"):
+            self.service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "urgent",
+                    }
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )
+
+    def test_complete_task_allows_explicit_planned_task(self) -> None:
+        planned = self.service.plan_tasks(
+            parent_title="Ship pomo update",
+            subtasks=[
+                {
+                    "task_title": "review failing tests",
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                }
+            ],
+            now=datetime(2026, 4, 10, 9, 0, 0),
+        )[0]
+
+        completed = self.service.complete_task(
+            task_ref=planned.task_id,
+            use_latest=False,
+            now=datetime(2026, 4, 10, 9, 30, 0),
+        )
+
+        self.assertEqual(completed.task_id, planned.task_id)
+        self.assertEqual(completed.state, "completed")
+        self.assertEqual(completed.total_elapsed_seconds, 0)
+
     def test_start_new_task_rolls_back_if_session_insert_fails(self) -> None:
         with self.store._connect() as connection:
             connection.execute(

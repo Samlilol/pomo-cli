@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import subprocess
 import sys
@@ -8,8 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from pomo_cli.cli import build_parser, format_status, format_summary, main
-from pomo_cli.models import SummaryTaskEntry
+from pomo_cli.cli import build_parser, format_backlog, format_status, format_summary, main
+from pomo_cli.models import BacklogEntry, SummaryTaskEntry
 from pomo_cli.service import PomoService, StatusPayload, SummaryPayload
 from pomo_cli.store import PomoStore
 
@@ -43,6 +44,33 @@ class CliSmokeTests(unittest.TestCase):
         args = build_parser().parse_args(["summary"])
 
         self.assertEqual(args.command, "summary")
+
+    def test_backlog_parses(self) -> None:
+        args = build_parser().parse_args(["backlog"])
+
+        self.assertEqual(args.command, "backlog")
+
+    def test_plan_parses(self) -> None:
+        args = build_parser().parse_args(["plan", "--file", "plan.json"])
+
+        self.assertEqual(args.command, "plan")
+        self.assertEqual(args.file, "plan.json")
+
+    def test_run_with_task_id_parses(self) -> None:
+        args = build_parser().parse_args(["run", "--task-id", "2026-0604-0001"])
+
+        self.assertEqual(args.command, "run")
+        self.assertEqual(args.task_id, "2026-0604-0001")
+        self.assertIsNone(args.position)
+        self.assertIsNone(args.minutes)
+
+    def test_run_with_position_parses(self) -> None:
+        args = build_parser().parse_args(["run", "--position", "1", "--minutes", "15"])
+
+        self.assertEqual(args.command, "run")
+        self.assertEqual(args.position, 1)
+        self.assertIsNone(args.task_id)
+        self.assertEqual(args.minutes, 15)
 
     def test_watch_parses(self) -> None:
         args = build_parser().parse_args(["watch"])
@@ -99,6 +127,18 @@ class CliSmokeTests(unittest.TestCase):
     def test_start_rejects_negative_minutes(self) -> None:
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["start", "--task", "Write tests", "--minutes", "-5"])
+
+    def test_run_rejects_missing_selector(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["run"])
+
+    def test_run_rejects_multiple_selectors(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["run", "--task-id", "123", "--position", "1"])
+
+    def test_run_rejects_zero_minutes(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["run", "--task-id", "123", "--minutes", "0"])
 
     def test_complete_rejects_multiple_selectors(self) -> None:
         with self.assertRaises(SystemExit):
@@ -167,6 +207,33 @@ class CliSmokeTests(unittest.TestCase):
         self.assertIn("tasks_worked_on_today: 2", rendered)
         self.assertIn("tasks_completed_today: 1", rendered)
         self.assertIn("2026-0604-0001 write draft: 25m 0s", rendered)
+
+    def test_format_backlog_renders_ordered_planned_tasks(self) -> None:
+        rendered = format_backlog(
+            [
+                BacklogEntry(
+                    position=1,
+                    task_id="2026-1004-0001",
+                    task_title="review failing tests",
+                    estimate_minutes=15,
+                    priority="high",
+                    source_parent_title="Ship pomo update",
+                    state="planned",
+                ),
+                BacklogEntry(
+                    position=2,
+                    task_id="2026-1004-0002",
+                    task_title="write release note",
+                    estimate_minutes=10,
+                    priority="medium",
+                    source_parent_title="Ship pomo update",
+                    state="planned",
+                ),
+            ]
+        )
+
+        self.assertIn("1. [high] review failing tests (15m) task_id=2026-1004-0001 state=planned parent=Ship pomo update", rendered)
+        self.assertIn("2. [medium] write release note (10m) task_id=2026-1004-0002 state=planned parent=Ship pomo update", rendered)
 
 
 class CliFlowTests(unittest.TestCase):
@@ -320,6 +387,210 @@ class CliFlowTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("no active session", stderr.getvalue())
 
+    def test_backlog_prints_planned_tasks_in_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    },
+                    {
+                        "task_title": "write release note",
+                        "estimate_minutes": 10,
+                        "priority": "medium",
+                    },
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )
+
+            result = subprocess.run(
+                [sys.executable, "-m", "pomo_cli", "backlog"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                env=self._base_env(temp_home),
+            )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("1. [high] review failing tests (15m)", result.stdout)
+        self.assertIn("2. [medium] write release note (10m)", result.stdout)
+        self.assertIn("parent=Ship pomo update", result.stdout)
+        self.assertIn("state=planned", result.stdout)
+
+    def test_plan_reads_json_file_and_prints_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            plan_path = Path(temp_home) / "plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "parent_title": "Ship pomo update",
+                        "subtasks": [
+                            {
+                                "task_title": "review failing tests",
+                                "estimate_minutes": 15,
+                                "priority": "high",
+                            },
+                            {
+                                "task_title": "write release note",
+                                "estimate_minutes": 10,
+                                "priority": "medium",
+                            },
+                        ],
+                    }
+                )
+            )
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["plan", "--file", str(plan_path)],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
+                )
+
+            service = self._seed_store(temp_home)
+            backlog = service.backlog_for_date("2026-04-10")
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(len(backlog), 2)
+        self.assertIn("1. [high] review failing tests (15m)", stdout.getvalue())
+        self.assertIn("2. [medium] write release note (10m)", stdout.getvalue())
+
+    def test_plan_rejects_invalid_json_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            plan_path = Path(temp_home) / "plan.json"
+            plan_path.write_text("{not-json")
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["plan", "--file", str(plan_path)],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
+                )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("invalid plan file", stderr.getvalue().lower())
+
+    def test_run_with_task_id_starts_a_planned_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            planned = service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    }
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )[0]
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            ticks = iter(
+                [
+                    datetime(2026, 4, 10, 9, 30, 0),
+                    datetime(2026, 4, 10, 9, 30, 5),
+                ]
+            )
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["run", "--task-id", planned.task_id],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: next(ticks),
+                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+                )
+
+            refreshed = service.get_status(now=datetime(2026, 4, 10, 9, 30, 5))
+
+        self.assertEqual(exit_code, 130)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(refreshed.task_id, planned.task_id)
+        self.assertEqual(refreshed.state, "running")
+        self.assertIn(f"task_id: {planned.task_id}", stdout.getvalue())
+        self.assertIn("planned_minutes: 15", stdout.getvalue())
+
+    def test_run_with_position_resolves_same_task_shown_in_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    },
+                    {
+                        "task_title": "write release note",
+                        "estimate_minutes": 10,
+                        "priority": "medium",
+                    },
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            ticks = iter(
+                [
+                    datetime(2026, 4, 10, 9, 30, 0),
+                    datetime(2026, 4, 10, 9, 30, 5),
+                ]
+            )
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["run", "--position", "2"],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: next(ticks),
+                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+                )
+
+            refreshed = service.get_status(now=datetime(2026, 4, 10, 9, 30, 5))
+
+        self.assertEqual(exit_code, 130)
+        self.assertEqual(refreshed.task_title, "write release note")
+        self.assertIn("task_title: write release note", stdout.getvalue())
+        self.assertIn("planned_minutes: 10", stdout.getvalue())
+
+    def test_run_rejects_non_planned_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            task = service.start_new_task(
+                task_title="write 500-word essay",
+                planned_minutes=25,
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )
+            service.close_active_session(now=datetime(2026, 4, 10, 9, 25, 0))
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["run", "--task-id", task.task_id],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: datetime(2026, 4, 10, 9, 30, 0),
+                )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("run only works for planned backlog tasks", stderr.getvalue())
+
     def test_status_returns_error_when_no_task_is_tracked(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
             result = subprocess.run(
@@ -358,6 +629,99 @@ class CliFlowTests(unittest.TestCase):
         self.assertIn("scheduled_end_at:", result.stdout)
         self.assertNotIn("\nends_at:", "\n" + result.stdout)
         self.assertNotIn("remaining:", result.stdout)
+
+    def test_status_falls_back_to_one_line_planned_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            planned = service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    }
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )[0]
+
+            result = subprocess.run(
+                [sys.executable, "-m", "pomo_cli", "status"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                env=self._base_env(temp_home),
+            )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(f"task_id={planned.task_id}", result.stdout)
+        self.assertIn("state=planned", result.stdout)
+        self.assertIn("estimate=15m", result.stdout)
+        self.assertIn("priority=high", result.stdout)
+        self.assertNotIn("scheduled_end_at:", result.stdout)
+
+    def test_complete_latest_ignores_planned_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            started_at = datetime.now().replace(microsecond=0) - timedelta(minutes=5)
+            worked = service.start_new_task(
+                task_title="write 500-word essay",
+                planned_minutes=25,
+                now=started_at,
+            )
+            service.close_active_session(now=started_at + timedelta(minutes=5))
+            service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    }
+                ],
+                now=started_at + timedelta(minutes=10),
+            )
+
+            complete_result = subprocess.run(
+                [sys.executable, "-m", "pomo_cli", "complete", "--latest"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                env=self._base_env(temp_home),
+            )
+
+        self.assertEqual(complete_result.returncode, 0)
+        self.assertIn(f"task_id: {worked.task_id}", complete_result.stdout)
+        self.assertNotIn("review failing tests", complete_result.stdout)
+
+    def test_complete_with_task_id_allows_planned_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            planned = service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    }
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )[0]
+
+            complete_result = subprocess.run(
+                [sys.executable, "-m", "pomo_cli", "complete", "--task-id", planned.task_id],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                env=self._base_env(temp_home),
+            )
+
+        self.assertEqual(complete_result.returncode, 0)
+        self.assertIn(f"task_id={planned.task_id}", complete_result.stdout)
+        self.assertIn("state=completed", complete_result.stdout)
+        self.assertIn("total_time_spent=0s", complete_result.stdout)
+        self.assertNotIn("scheduled_end_at:", complete_result.stdout)
 
     def test_complete_latest_and_summary_report_completed_work(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
@@ -401,12 +765,13 @@ class CliFlowTests(unittest.TestCase):
     def test_summary_reports_worked_today_output(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
             service = self._seed_store(temp_home)
+            now = datetime.now().replace(microsecond=0)
             status = service.start_new_task(
                 task_title="write 500-word essay",
                 planned_minutes=25,
-                now=datetime(2026, 4, 6, 9, 0, 0),
+                now=now,
             )
-            service.close_active_session(now=datetime(2026, 4, 6, 9, 5, 0))
+            service.close_active_session(now=now + timedelta(minutes=5))
 
             summary_result = subprocess.run(
                 [sys.executable, "-m", "pomo_cli", "summary"],
