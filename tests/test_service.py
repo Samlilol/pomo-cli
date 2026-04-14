@@ -44,8 +44,8 @@ class ServiceTests(unittest.TestCase):
             now=datetime(2026, 4, 6, 10, 0, 0),
         )
 
-        self.assertEqual(first.task_id, "2026-0604-0001")
-        self.assertEqual(second.task_id, "2026-0604-0002")
+        self.assertEqual(first.task_id, "2026-0406-0001")
+        self.assertEqual(second.task_id, "2026-0406-0002")
 
     def test_start_new_task_resets_day_based_sequence_on_a_new_day(self) -> None:
         first = self.service.start_new_task(
@@ -61,8 +61,8 @@ class ServiceTests(unittest.TestCase):
             now=datetime(2026, 4, 7, 9, 0, 0),
         )
 
-        self.assertEqual(first.task_id, "2026-0604-0001")
-        self.assertEqual(second.task_id, "2026-0704-0001")
+        self.assertEqual(first.task_id, "2026-0406-0001")
+        self.assertEqual(second.task_id, "2026-0407-0001")
 
     def test_close_running_session_moves_task_to_session_closed(self) -> None:
         status = self.service.start_new_task(
@@ -179,8 +179,8 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(
             [(task.task_id, task.task_title, task.estimate_minutes, task.priority) for task in planned_tasks],
             [
-                ("2026-1004-0001", "review failing tests", 15, "high"),
-                ("2026-1004-0002", "write release note", 10, "medium"),
+                ("2026-0410-0001", "review failing tests", 15, "high"),
+                ("2026-0410-0002", "write release note", 10, "medium"),
             ],
         )
         self.assertEqual(
@@ -197,8 +197,8 @@ class ServiceTests(unittest.TestCase):
                 for entry in backlog
             ],
             [
-                (1, "2026-1004-0001", "review failing tests", 15, "high", "Ship pomo update", "planned"),
-                (2, "2026-1004-0002", "write release note", 10, "medium", "Ship pomo update", "planned"),
+                (1, "2026-0410-0001", "review failing tests", 15, "high", "Ship pomo update", "planned"),
+                (2, "2026-0410-0002", "write release note", 10, "medium", "Ship pomo update", "planned"),
             ],
         )
 
