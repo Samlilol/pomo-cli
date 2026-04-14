@@ -302,12 +302,12 @@ def main(
         return 0
 
     if args.command == "summary":
-        summary = service.summary_for_date(date.today().isoformat())
+        summary = service.summary_for_date(now_fn().date().isoformat())
         print(format_summary(summary), file=stdout)
         return 0
 
     if args.command == "backlog":
-        backlog = service.backlog_for_date(date.today().isoformat())
+        backlog = service.backlog_for_date(now_fn().date().isoformat())
         print(format_backlog(backlog), file=stdout)
         return 0
 

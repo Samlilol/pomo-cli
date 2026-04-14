@@ -404,7 +404,7 @@ class CliFlowTests(unittest.TestCase):
                         "priority": "medium",
                     },
                 ],
-                now=datetime(2026, 4, 10, 9, 0, 0),
+                now=datetime.now(),
             )
 
             result = subprocess.run(

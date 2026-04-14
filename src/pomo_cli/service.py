@@ -287,7 +287,7 @@ class PomoService:
 
             validated_subtasks.append(
                 {
-                    "task_id": f"{now.strftime('%Y-%d%m')}-{created_count + offset:04d}",
+                    "task_id": f"{now.strftime('%Y-%m%d')}-{created_count + offset:04d}",
                     "task_title": task_title,
                     "created_at": now,
                     "estimate_minutes": estimate_minutes,
@@ -344,4 +344,4 @@ class PomoService:
 
     def _next_task_id(self, now: datetime) -> str:
         task_count = self.store.count_tasks_created_on_date(now.date().isoformat())
-        return f"{now.strftime('%Y-%d%m')}-{task_count + 1:04d}"
+        return f"{now.strftime('%Y-%m%d')}-{task_count + 1:04d}"
