@@ -2,9 +2,13 @@
 
 This file is for AI agents (Claude Code, Codex, etc.) that want to drive `pomo-cli` on behalf of a user.
 
+`pomo-cli` is a local focus runtime for agent-assisted work. The CLI is the base
+product; planning and MCP are optional layers on top of the same local task/session
+state.
+
 ## Invoking the CLI
 
-If `pomo` is on PATH (installed via `setup.py develop`):
+If `pomo` is on PATH (installed via `pip install -e .` or `pip install pomo-cli`):
 
 ```bash
 pomo <subcommand>
@@ -16,7 +20,15 @@ Otherwise, from the repo root:
 python3 -m pomo_cli <subcommand>
 ```
 
-## Command Reference
+For MCP support, install the optional extra:
+
+```bash
+pip install "pomo-cli[mcp]"
+```
+
+## Command Layers
+
+### Core focus loop
 
 ```bash
 # Start a new ad hoc task
@@ -50,6 +62,16 @@ pomo complete --latest              # fallback if task_id is lost
 # Today's time summary
 pomo summary
 ```
+
+### Planning layer
+
+Use the planning layer when the agent should turn a messy todo list into a local
+backlog before starting work.
+
+### Agent / MCP layer
+
+Use the MCP layer when the agent client should call `pomo-mcp` directly instead of
+shelling out through CLI commands.
 
 ## Plan File Format
 
@@ -85,6 +107,23 @@ planned → running → session_closed → running  (via continue/run)
 3. **Use `complete`, not just letting the timer expire.** A session expiring moves the task to `session_closed`, not `completed`. Always call `pomo complete` when the user says they are done.
 4. **`pomo summary` only shows completed tasks.** Use `pomo status` for in-progress state.
 5. **The countdown is foreground.** After starting, inform the user the timer is running. They can Ctrl+C and re-attach with `pomo watch`.
+
+## MCP Server
+
+Verified MCP client configs:
+
+```json
+// Claude Code: ~/.claude/claude_code_config.json
+{ "mcpServers": { "pomo": { "command": "pomo-mcp", "args": [] } } }
+
+// Cursor: .cursor/mcp.json
+{ "mcpServers": { "pomo": { "command": "pomo-mcp", "args": [] } } }
+
+// Windsurf: ~/.codeium/windsurf/mcp_config.json
+{ "mcpServers": { "pomo": { "command": "pomo-mcp", "args": [] } } }
+```
+
+`pomo-mcp` is a local stdio server. It reads and writes `~/.pomo-cli/pomo.db`. Only connect it to trusted local agent clients. Do not expose it as a network service.
 
 ## Typical Flows
 

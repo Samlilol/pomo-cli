@@ -1,13 +1,17 @@
 ---
 name: pomo
-description: Use when the user wants to start a Pomodoro focus session, track work time, plan tasks, check what they worked on today, or manage their pomo-cli backlog. Triggers on phrases like "open pomo", "start a timer", "pomo 計時", "幫我開 pomo", "help me focus", "start a focus session", "mark it done", "complete the task", "what did I work on today", "pomo summary", "pomo status", or anything involving pomo-cli task management.
+description: Use when the user wants to start or resume a focus session, track work time, plan tasks, check what they worked on today, or manage their pomo-cli backlog. Triggers on phrases like "open pomo", "start a timer", "pomo 計時", "幫我開 pomo", "help me focus", "start a focus session", "mark it done", "complete the task", "what did I work on today", "pomo summary", "pomo status", or anything involving pomo-cli task management.
 metadata:
   version: 1.0.0
 ---
 
 # Pomo CLI Skill
 
-You are helping the user manage focus sessions using `pomo-cli`, a local Pomodoro timer designed for agent-assisted workflows.
+You are helping the user manage focus sessions using `pomo-cli`, a local focus runtime for agent-assisted work.
+
+`pomo-cli` is not just a timer in the terminal. It is a deterministic local interface
+for starting, resuming, tracking, and completing real work sessions, with optional
+planning and MCP layers on top.
 
 ## Setup Check
 
@@ -20,7 +24,7 @@ which pomo
 If not found, fall back to running from the project directory:
 
 ```bash
-cd ~/Desktop/Study\ Repo/pomo-cli && python3 -m pomo_cli <subcommand>
+cd <repo-root> && python3 -m pomo_cli <subcommand>
 ```
 
 Or activate the venv if needed:
@@ -29,9 +33,17 @@ Or activate the venv if needed:
 . /tmp/pomo-cli-venv/bin/activate && pomo <subcommand>
 ```
 
+Optional MCP support:
+
+```bash
+pip install "pomo-cli[mcp]"
+```
+
 ---
 
 ## Command Reference
+
+### Core focus loop
 
 ### Start a brand new ad hoc task
 ```bash
@@ -97,6 +109,36 @@ pomo summary
 ```
 Shows tasks completed today, total time spent, and per-task breakdown.
 
+### Planning layer
+
+### Flow A — Single-task loop (most common)
+1. User describes what they want to focus on.
+2. Estimate the session length from the task scope (e.g. "write 500 words" → 25–30 min).
+3. Confirm with the user if unclear.
+4. Run: `pomo start --task "<title>" --minutes <n>`
+5. **Record the `task_id`** from the status output.
+6. When user says they're done: `pomo complete --task-id <id>`
+7. If you've lost the id: `pomo complete --latest`
+
+### Flow B — Structured planning
+1. Collect tasks (from user, Slack MCP, Linear MCP, etc.).
+2. Break into subtasks with `estimate_minutes` and `priority`.
+3. Write a `today-plan.json` file.
+4. Run: `pomo plan --file today-plan.json`
+5. Show the backlog: `pomo backlog`
+6. When user picks a task: `pomo run --position <n>`
+
+### Agent / MCP layer
+
+Optional MCP support:
+
+```bash
+pip install "pomo-cli[mcp]"
+```
+
+Use MCP when the agent client should call a trusted local interface directly instead
+of shelling out through CLI commands.
+
 ---
 
 ## State Model
@@ -120,23 +162,6 @@ Key rules:
 ---
 
 ## Agent Workflow
-
-### Flow A — Ad hoc task (most common)
-1. User describes what they want to focus on.
-2. Estimate the session length from the task scope (e.g. "write 500 words" → 25–30 min).
-3. Confirm with the user if unclear.
-4. Run: `pomo start --task "<title>" --minutes <n>`
-5. **Record the `task_id`** from the status output.
-6. When user says they're done: `pomo complete --task-id <id>`
-7. If you've lost the id: `pomo complete --latest`
-
-### Flow B — Structured planning
-1. Collect tasks (from user, Slack MCP, Linear MCP, etc.).
-2. Break into subtasks with `estimate_minutes` and `priority`.
-3. Write a `today-plan.json` file.
-4. Run: `pomo plan --file today-plan.json`
-5. Show the backlog: `pomo backlog`
-6. When user picks a task: `pomo run --position <n>`
 
 ### Flow C — Continue an interrupted session
 1. Check status: `pomo status`
@@ -169,3 +194,18 @@ When uncertain, ask: "How long do you want to set the timer for?"
 - Use `--latest` only as a fallback — prefer explicit `--task-id` to avoid ambiguity.
 - `pomo summary` is useful for end-of-day review: "here's what you got done today."
 - The countdown runs in the foreground. After starting, tell the user the timer is running and they can Ctrl+C and re-attach later with `pomo watch`.
+
+## MCP Server
+
+Verified MCP client configs:
+
+```json
+// Claude Code: ~/.claude/claude_code_config.json
+{ "mcpServers": { "pomo": { "command": "pomo-mcp", "args": [] } } }
+
+// Cursor: .cursor/mcp.json
+{ "mcpServers": { "pomo": { "command": "pomo-mcp", "args": [] } } }
+
+// Windsurf: ~/.codeium/windsurf/mcp_config.json
+{ "mcpServers": { "pomo": { "command": "pomo-mcp", "args": [] } } }
+```
