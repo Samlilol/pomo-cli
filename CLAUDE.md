@@ -8,7 +8,8 @@ Local Pomodoro CLI for agent-assisted workflows. SQLite-backed, pure Python, no 
 cd pomo-cli
 python3 -m venv /tmp/pomo-cli-venv
 . /tmp/pomo-cli-venv/bin/activate
-python3 setup.py develop
+pip install -e .
+pip install -e ".[mcp]"   # optional MCP server support
 ```
 
 If your checkout path contains spaces (e.g. `/Users/you/Desktop/Study Repo`), use a venv path without spaces like `/tmp/pomo-cli-venv`. The generated `pomo` script needs a valid interpreter path.
@@ -16,7 +17,7 @@ If your checkout path contains spaces (e.g. `/Users/you/Desktop/Study Repo`), us
 ## Running Tests
 
 ```bash
-PYTHONPATH=src python3 -m unittest -v
+python -m unittest -v
 ```
 
 All tests are in `tests/`. They use injected `now_fn` and `sleep_fn` so no real timers or sleeps run during the test suite.
@@ -34,7 +35,7 @@ timer.py     — run_countdown(): foreground terminal countdown loop
 ### Key constraints
 
 - **One active session at a time** — enforced by a SQLite partial unique index on `sessions WHERE ended_at IS NULL`. Any command that opens a new session calls `_assert_no_running_session()` first.
-- **Task IDs are CLI-owned** — format `YYYY-DDMM-NNNN`, generated from `count_tasks_created_on_date`. Agents must reuse the returned `task_id` to continue or complete a task.
+- **Task IDs are CLI-owned** — format `YYYY-MMDD-NNNN`, generated from `count_tasks_created_on_date`. Agents must reuse the returned `task_id` to continue or complete a task.
 - **Elapsed time uses actual seconds**, not planned minutes. `finalize_session` accumulates real elapsed time into `tasks.total_elapsed_seconds`.
 - **Summary buckets by `completed_at`** — only explicitly completed tasks appear in `pomo summary`.
 
