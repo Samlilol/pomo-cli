@@ -1,3 +1,4 @@
+import importlib.util
 import io
 import sqlite3
 import unittest
@@ -7,6 +8,9 @@ from unittest.mock import patch
 
 from pomo_cli.service import PomoService
 from pomo_cli.store import PomoStore
+
+
+HAS_MCP = importlib.util.find_spec("mcp") is not None
 
 
 class McpServerTests(unittest.TestCase):
@@ -19,6 +23,17 @@ class McpServerTests(unittest.TestCase):
         store = PomoStore(db_path)
         store.initialize()
         return PomoService(store)
+
+    def _create_server(
+        self,
+        service: PomoService,
+        now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
+    ):
+        if not HAS_MCP:
+            self.skipTest("mcp package is not installed")
+        from pomo_cli import mcp_server
+
+        return mcp_server.create_server(service=service, now_fn=now_fn)
 
     def test_main_reports_missing_mcp_dependency_without_traceback(self) -> None:
         from pomo_cli import mcp_server
@@ -62,12 +77,7 @@ class McpServerTests(unittest.TestCase):
         self.assertNotIn("Desktop/Study Repo", skill_text)
 
     def test_create_server_exposes_expected_tools(self) -> None:
-        from pomo_cli import mcp_server
-
-        server = mcp_server.create_server(
-            service=self._make_service(),
-            now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
-        )
+        server = self._create_server(service=self._make_service())
 
         self.assertEqual(
             set(server._pomo_tools),
@@ -84,12 +94,7 @@ class McpServerTests(unittest.TestCase):
         )
 
     def test_start_task_returns_json_serializable_payload(self) -> None:
-        from pomo_cli import mcp_server
-
-        server = mcp_server.create_server(
-            service=self._make_service(),
-            now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
-        )
+        server = self._create_server(service=self._make_service())
 
         payload = server._pomo_tools["start_task"]("write docs", 25)
 
@@ -99,8 +104,6 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(payload["starts_at"], "2026-04-10T09:00:00")
 
     def test_get_summary_uses_now_fn_when_date_is_omitted(self) -> None:
-        from pomo_cli import mcp_server
-
         service = self._make_service()
         service.start_new_task(
             task_title="write docs",
@@ -114,7 +117,7 @@ class McpServerTests(unittest.TestCase):
             now=datetime(2026, 4, 10, 8, 5, 0),
         )
 
-        server = mcp_server.create_server(
+        server = self._create_server(
             service=service,
             now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
         )
@@ -126,8 +129,6 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(payload["total_time_spent_today"], 300)
 
     def test_get_backlog_uses_explicit_date_when_provided(self) -> None:
-        from pomo_cli import mcp_server
-
         service = self._make_service()
         service.plan_tasks(
             parent_title="Ship pomo update",
@@ -141,7 +142,7 @@ class McpServerTests(unittest.TestCase):
             now=datetime(2026, 4, 10, 9, 0, 0),
         )
 
-        server = mcp_server.create_server(
+        server = self._create_server(
             service=service,
             now_fn=lambda: datetime(2026, 4, 11, 9, 0, 0),
         )
@@ -152,24 +153,14 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(payload[0]["task_title"], "review failing tests")
 
     def test_get_summary_rejects_invalid_date_format(self) -> None:
-        from pomo_cli import mcp_server
-
-        server = mcp_server.create_server(
-            service=self._make_service(),
-            now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
-        )
+        server = self._create_server(service=self._make_service())
 
         payload = server._pomo_tools["get_summary"]("04/10/2026")
 
         self.assertEqual(payload, {"error": "date must use YYYY-MM-DD"})
 
     def test_plan_tasks_invalid_priority_returns_error_payload(self) -> None:
-        from pomo_cli import mcp_server
-
-        server = mcp_server.create_server(
-            service=self._make_service(),
-            now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
-        )
+        server = self._create_server(service=self._make_service())
 
         payload = server._pomo_tools["plan_tasks"](
             "Ship pomo update",
@@ -185,8 +176,6 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(payload, {"error": "priority must be one of: high, medium, low"})
 
     def test_continue_task_without_task_id_uses_latest_worked_task(self) -> None:
-        from pomo_cli import mcp_server
-
         service = self._make_service()
         first = service.start_new_task(
             task_title="write docs",
@@ -195,10 +184,7 @@ class McpServerTests(unittest.TestCase):
         )
         service.close_active_session(now=datetime(2026, 4, 10, 8, 5, 0))
 
-        server = mcp_server.create_server(
-            service=service,
-            now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
-        )
+        server = self._create_server(service=service)
 
         payload = server._pomo_tools["continue_task"](None, 10)
 
@@ -206,8 +192,6 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(payload["planned_minutes"], 10)
 
     def test_run_planned_task_supports_task_id_and_position(self) -> None:
-        from pomo_cli import mcp_server
-
         service = self._make_service()
         planned = service.plan_tasks(
             parent_title="Ship pomo update",
@@ -225,7 +209,7 @@ class McpServerTests(unittest.TestCase):
             ],
             now=datetime(2026, 4, 10, 9, 0, 0),
         )
-        server = mcp_server.create_server(
+        server = self._create_server(
             service=service,
             now_fn=lambda: datetime(2026, 4, 10, 9, 30, 0),
         )
@@ -239,12 +223,7 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(by_position["planned_minutes"], 20)
 
     def test_double_start_returns_consistent_active_session_error(self) -> None:
-        from pomo_cli import mcp_server
-
-        server = mcp_server.create_server(
-            service=self._make_service(),
-            now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
-        )
+        server = self._create_server(service=self._make_service())
 
         first = server._pomo_tools["start_task"]("write docs", 25)
         second = server._pomo_tools["start_task"]("review tests", 25)
@@ -253,12 +232,7 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(second, {"error": "an active session is already running"})
 
     def test_complete_task_requires_exactly_one_selector(self) -> None:
-        from pomo_cli import mcp_server
-
-        server = mcp_server.create_server(
-            service=self._make_service(),
-            now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
-        )
+        server = self._create_server(service=self._make_service())
 
         missing = server._pomo_tools["complete_task"]()
         conflicting = server._pomo_tools["complete_task"]("2026-0410-0001", True)
@@ -267,13 +241,8 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(conflicting, {"error": "task_id and use_latest cannot be combined"})
 
     def test_integrity_error_is_normalized_to_active_session_error(self) -> None:
-        from pomo_cli import mcp_server
-
         service = self._make_service()
-        server = mcp_server.create_server(
-            service=service,
-            now_fn=lambda: datetime(2026, 4, 10, 9, 0, 0),
-        )
+        server = self._create_server(service=service)
 
         with patch.object(service, "start_new_task", side_effect=sqlite3.IntegrityError("UNIQUE constraint failed: index 'sessions_single_active'")):
             payload = server._pomo_tools["start_task"]("write docs", 25)

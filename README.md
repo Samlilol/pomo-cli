@@ -61,11 +61,17 @@ cd pomo-cli
 python3 -m venv /tmp/pomo-cli-venv        # use a path without spaces
 . /tmp/pomo-cli-venv/bin/activate
 pip install -e .
-pip install -e ".[mcp]"                   # optional MCP server support
 python -m unittest -v
 ```
 
 > If your checkout path contains spaces (e.g. `/Users/you/Desktop/Study Repo`), keep the venv at a path without spaces like `/tmp/pomo-cli-venv`. The generated `pomo` script needs a valid interpreter path.
+
+Install the optional extra when you want MCP server support or want the MCP
+integration tests to run locally instead of being skipped:
+
+```bash
+pip install -e ".[mcp]"
+```
 
 ## Product Layers
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pomo-cli"
 version = "0.1.0"
-description = "Local pomodoro CLI for agent-assisted workflows"
+description = "Local focus runtime for agent-assisted work"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [
   {name = "Sam Li"},
 ]
-keywords = ["pomodoro", "cli", "productivity", "agents", "mcp"]
+keywords = ["focus", "cli", "task-tracking", "agents", "mcp"]
 classifiers = [
   "Environment :: Console",
   "Intended Audience :: End Users/Desktop",
