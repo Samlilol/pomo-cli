@@ -7,13 +7,19 @@ cd pomo-cli
 python3 -m venv /tmp/pomo-cli-venv
 . /tmp/pomo-cli-venv/bin/activate
 pip install -e .
-pip install -e ".[mcp]"   # only if you need the MCP server
 ```
 
 Run the test suite with:
 
 ```bash
 python -m unittest -v
+```
+
+Install the optional MCP extra when you want to run `pomo-mcp` or execute the
+MCP integration tests locally instead of skipping them:
+
+```bash
+pip install -e ".[mcp]"
 ```
 
 ## Project Rules
