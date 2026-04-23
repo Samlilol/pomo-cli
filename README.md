@@ -2,21 +2,23 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Local focus runtime for agent-assisted work.
+Local work observability runtime for agent-assisted work.
 
 `pomo-cli` gives an agent a deterministic local interface for starting, resuming,
-tracking, and completing real work sessions without needing a GUI, daemon, or
-cloud service.
+tracking, and completing task-linked work sessions without needing a GUI, daemon,
+or cloud service.
 
 ## What
 
-`pomo-cli` is a local-first CLI and optional MCP server for focus sessions.
-It is built for workflows where a coding agent helps the user pick a task,
-estimate a session, start the timer, recover from interruptions, and close the
-loop with a trustworthy summary.
+`pomo-cli` is a local-first CLI and optional MCP server for task and session
+tracking in agent-assisted workflows. It is built for workflows where an agent
+helps the user pick a real task, estimate a session, start tracking locally,
+recover from interruptions, and close the loop with a trustworthy summary.
 
-The product is not just "a timer in the terminal." The product is a small local
-execution layer for agent-assisted work.
+The product is not just "a timer in the terminal." It is a small local runtime
+for task identity, session lifecycle, and worked-today visibility.
+
+The canonical product definition lives in `PRD.md`.
 
 ## Why
 
@@ -29,8 +31,24 @@ It deliberately optimizes for:
 - local-first state
 - deterministic commands
 - explicit task/session tracking
+- task-level identity instead of app-level tracking
 - easy handoff between CLI and MCP
 - a small operational footprint
+
+## Current Status
+
+What works today:
+
+- local SQLite-backed task and session tracking
+- CLI commands for `start`, `plan`, `run`, `continue`, `watch`, `status`, `complete`, `summary`, and `backlog`
+- optional MCP server exposing the same core operations
+- daily summaries with worked-today totals, completed-today totals, and per-task time
+
+What is not built yet:
+
+- human vs agent vs review vs idle time classification
+- durable end-of-task summary generation
+- confirmed post-backs to Linear, Slack, or Git
 
 ## Who It's For
 
@@ -75,7 +93,7 @@ pip install -e ".[mcp]"
 
 ## Product Layers
 
-### Core Focus Loop
+### Core Runtime Loop
 
 The core loop is the smallest useful workflow:
 
@@ -96,6 +114,13 @@ pomo summary
 
 This is the primary product path. If you only use these commands, `pomo-cli`
 still delivers its core value.
+
+`pomo summary` reports:
+
+- tasks worked today
+- tasks completed today
+- total time spent today
+- per-task elapsed totals
 
 ### Planning Layer
 
@@ -152,6 +177,9 @@ This is the shortest path to the product's value.
 
        pomo summary
 
+   This includes tasks worked today, tasks completed today, total time spent
+   today, and per-task elapsed totals.
+
 For a fresh data directory, set `HOME` to a temporary directory before running.
 
 ## Task Identity
@@ -206,7 +234,7 @@ planned → running → session_closed → running  (via continue / run)
 ```
 
 - **planned** — in backlog, not yet started
-- **running** — countdown active in terminal
+- **running** — countdown active in terminal; multiple tasks may have active sessions, but a single task may not have more than one active session
 - **session_closed** — timer hit 0 or Ctrl+C; elapsed time recorded, task not yet done
 - **completed** — explicitly marked done via `pomo complete`
 

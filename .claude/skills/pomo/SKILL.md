@@ -1,8 +1,8 @@
 ---
 name: pomo
-description: Use when the user wants to start or resume a focus session, track work time, plan tasks, check what they worked on today, or manage their pomo-cli backlog. Triggers on phrases like "open pomo", "start a timer", "pomo 計時", "幫我開 pomo", "help me focus", "start a focus session", "mark it done", "complete the task", "what did I work on today", "pomo summary", "pomo status", or anything involving pomo-cli task management.
+description: Use when the user wants to start or resume a focus session, track work time, plan tasks, check what they worked on today, or manage their pomo-cli backlog. Triggers on phrases like "open pomo", "start a timer", "pomo 計時", "幫我開 pomo", "help me focus", "start a focus session", "mark it done", "complete the task", "what did I work on today", "pomo summary", "pomo status", or anything involving pomo-cli task management. ALSO triggers when the user's message expresses intent to work on something — ticket IDs (LIN-\d+, #\d+, PROJ-\d+), natural language ("help me review X", "let's work on Y", "build/fix/debug X"), or tasks surfaced from Slack/Linear MCP.
 metadata:
-  version: 1.0.0
+  version: 2.0.0
 ---
 
 # Pomo CLI Skill
@@ -107,7 +107,7 @@ pomo complete --latest          # fallback if you've lost the id
 ```bash
 pomo summary
 ```
-Shows tasks completed today, total time spent, and per-task breakdown.
+Shows tasks worked today, tasks completed today, total time spent today, and per-task breakdown.
 
 ### Planning layer
 
@@ -155,8 +155,9 @@ planned → running → session_closed → running (continue)
 - **completed** — explicitly marked done
 
 Key rules:
-- Only one active session at a time (enforced by the DB).
-- `start` / `run` / `continue` all fail if a session is already running.
+- Multiple active sessions across different tasks are allowed.
+- A single task cannot have more than one active session at a time.
+- `run` / `continue` fail if that same task is already running. `start` creates a new task session.
 - `complete` works whether the task is `running` or `session_closed`.
 
 ---
@@ -194,6 +195,55 @@ When uncertain, ask: "How long do you want to set the timer for?"
 - Use `--latest` only as a fallback — prefer explicit `--task-id` to avoid ambiguity.
 - `pomo summary` is useful for end-of-day review: "here's what you got done today."
 - The countdown runs in the foreground. After starting, tell the user the timer is running and they can Ctrl+C and re-attach later with `pomo watch`.
+
+---
+
+## Auto-Trigger Rules
+
+Auto-trigger fires when you detect a clear work intent in the user's message. Do this silently — do not interrupt the conversation.
+
+**Signal A — Structured ticket ID**
+Message contains `LIN-\d+`, `#\d+`, `PROJ-\d+`, etc.
+→ Use the ticket ID string as task title (e.g. "LIN-247")
+
+**Signal B — Natural language task intent**
+Phrases like "help me [verb] [noun]", "review X", "build/fix/debug X", "let's work on X", or tasks surfaced from standup or meetings.
+→ Extract a concise task title (≤60 chars), e.g. "review UIUX", "develop feature X"
+
+**Signal C — External tool source**
+Tasks pulled via Slack MCP (standup notes) or Linear MCP (ticket assigned):
+→ Use the ticket title or Slack message summary as task title
+
+**Action for all three:**
+1. Extract concise task title.
+2. Run `pomo status` — if that exact title is already running, continue silently.
+3. If not running: `pomo start --task "<title>" --minutes 25`
+4. Confirm briefly: "Session started: '<title>'." — do not interrupt conversation flow.
+
+Multiple sessions can run in parallel. You may start a session for a new task even if another is already running.
+
+---
+
+## Completion Detection
+
+When you detect completion signals (user says "done", "that works", "fixed it", "ship it", or a git commit references the task):
+1. Run `pomo status` to get elapsed time.
+2. Say: "{elapsed} min on '<task>'. Mark it complete?"
+3. If user confirms: `pomo complete --task-id <id>` (preferred) or `pomo complete --latest`
+4. Offer Linear post-back if the task title is a Linear ticket ID (see below).
+
+---
+
+## Linear Post-Back (after pomo complete)
+
+After completing a task whose title matches a Linear ticket ID (`LIN-\d+`):
+1. Ask: "Want me to update Linear ticket {id}?"
+2. If user confirms:
+   - Linear MCP `update_issue`: set status to Done
+   - Linear MCP `create_comment`: "Completed in {elapsed_min} min via pomo-cli on {date}."
+3. Confirm when done.
+
+---
 
 ## MCP Server
 
