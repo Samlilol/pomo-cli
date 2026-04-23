@@ -96,16 +96,16 @@ planned → running → session_closed → running  (via continue/run)
 ```
 
 - `planned` — in backlog, not yet started
-- `running` — countdown active, one active session allowed at a time
+- `running` — countdown active; multiple tasks may have active sessions, but a single task may not have more than one active session
 - `session_closed` — timer ended or Ctrl+C, elapsed time recorded, task not done yet
 - `completed` — explicitly marked done via `pomo complete`
 
 ## Agent Rules
 
 1. **Save `task_id` from the output of `start` or `run`.** You will need it for `continue` and `complete`. Prefer explicit `--task-id` over `--latest`.
-2. **Check for an active session before starting one.** Run `pomo status` if unsure. Starting a second session while one is running will error.
+2. **Check active sessions before starting more work.** Run `pomo status` if unsure. A task cannot have more than one active session at a time, but different tasks may run in parallel.
 3. **Use `complete`, not just letting the timer expire.** A session expiring moves the task to `session_closed`, not `completed`. Always call `pomo complete` when the user says they are done.
-4. **`pomo summary` only shows completed tasks.** Use `pomo status` for in-progress state.
+4. **`pomo summary` shows worked-today totals, completed-today totals, and per-task time entries.** Use `pomo status` for in-progress state.
 5. **The countdown is foreground.** After starting, inform the user the timer is running. They can Ctrl+C and re-attach with `pomo watch`.
 
 ## MCP Server
