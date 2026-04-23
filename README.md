@@ -72,6 +72,31 @@ pip install "pomo-cli @ git+https://github.com/Samlilol/pomo-cli.git"
 pip install "pomo-cli[mcp] @ git+https://github.com/Samlilol/pomo-cli.git"   # optional MCP server support
 ```
 
+`pip install` only installs the runtime commands (`pomo` and, with the extra,
+`pomo-mcp`). To make Codex or Claude auto-trigger `pomo` in other projects,
+install the agent skill globally too.
+
+From a cloned checkout:
+
+```bash
+mkdir -p ~/.codex/skills/pomo ~/.claude/skills/pomo
+cp .claude/skills/pomo/SKILL.md ~/.codex/skills/pomo/SKILL.md
+cp .claude/skills/pomo/SKILL.md ~/.claude/skills/pomo/SKILL.md
+```
+
+Without cloning the repo:
+
+```bash
+mkdir -p ~/.codex/skills/pomo ~/.claude/skills/pomo
+curl -fsSL https://raw.githubusercontent.com/Samlilol/pomo-cli/main/.claude/skills/pomo/SKILL.md \
+  -o ~/.codex/skills/pomo/SKILL.md
+cp ~/.codex/skills/pomo/SKILL.md ~/.claude/skills/pomo/SKILL.md
+```
+
+After this, agent clients that load global skills can recognize work intent
+such as "write me a 300-word essay", start `pomo`, do the work, and complete
+the task.
+
 For local development:
 
 ```bash
@@ -315,4 +340,4 @@ Best when the agent can confidently pick the next task without a planning round.
 
 - **`CLAUDE.md`** — project context for Claude Code: dev setup, architecture, how to add commands.
 - **`AGENTS.md`** — agent usage guide: full command reference, state model, workflow patterns, estimation heuristics.
-- **`.claude/skills/pomo/SKILL.md`** — Claude Code skill that auto-loads when this repo is open. Copy it to `~/.claude/skills/pomo/SKILL.md` for global availability.
+- **`.claude/skills/pomo/SKILL.md`** — agent skill that auto-loads when this repo is open. Copy it to `~/.codex/skills/pomo/SKILL.md` and/or `~/.claude/skills/pomo/SKILL.md` for global availability.
