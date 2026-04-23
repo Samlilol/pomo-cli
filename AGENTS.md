@@ -38,9 +38,13 @@ pomo start --task "<title>" --minutes <n>
 pomo plan --file today-plan.json
 
 # Start a planned backlog task
+pomo start --position <n>
+pomo start --task-id <id>
+pomo start --task-id <id> --minutes <n>   # override estimate
+
+# Backwards-compatible alias for planned backlog tasks
 pomo run --position <n>
 pomo run --task-id <id>
-pomo run --task-id <id> --minutes <n>   # override estimate
 
 # View today's backlog
 pomo backlog
@@ -49,8 +53,12 @@ pomo backlog
 pomo continue --minutes <n>
 pomo continue --task-id <id> --minutes <n>
 
-# Re-attach to the live countdown
+# Attach to the live countdown
 pomo watch
+
+# Start/continue and block immediately with a visible countdown
+pomo start --task "<title>" --minutes <n> --watch
+pomo continue --minutes <n> --watch
 
 # Check current task state
 pomo status
@@ -73,6 +81,16 @@ backlog before starting work.
 Use the MCP layer when the agent client should call `pomo-mcp` directly instead of
 shelling out through CLI commands.
 
+MCP uses the same start-first model:
+
+```text
+start_task(task_title, planned_minutes)                 # ad hoc task
+start_task(task_id=<id>)                                # planned task by id
+start_task(position=<n>)                                # planned task by backlog position
+start_task(position=<n>, planned_minutes=<m>)           # planned task with override
+run_planned_task(...)                                   # compatibility wrapper
+```
+
 ## Plan File Format
 
 ```json
@@ -90,14 +108,14 @@ shelling out through CLI commands.
 ## State Model
 
 ```
-planned → running → session_closed → running  (via continue/run)
+planned → running → session_closed → running  (via continue/start)
                  ↘               ↘
                   completed       completed
 ```
 
 - `planned` — in backlog, not yet started
-- `running` — countdown active; multiple tasks may have active sessions, but a single task may not have more than one active session
-- `session_closed` — timer ended or Ctrl+C, elapsed time recorded, task not done yet
+- `running` — session active; countdown is optional via `pomo watch` or `--watch`
+- `session_closed` — countdown ended in `watch`, elapsed time recorded, task not done yet
 - `completed` — explicitly marked done via `pomo complete`
 
 ## Agent Rules
@@ -106,7 +124,7 @@ planned → running → session_closed → running  (via continue/run)
 2. **Check active sessions before starting more work.** Run `pomo status` if unsure. A task cannot have more than one active session at a time, but different tasks may run in parallel.
 3. **Use `complete`, not just letting the timer expire.** A session expiring moves the task to `session_closed`, not `completed`. Always call `pomo complete` when the user says they are done.
 4. **`pomo summary` shows worked-today totals, completed-today totals, and per-task time entries.** Use `pomo status` for in-progress state.
-5. **The countdown is foreground.** After starting, inform the user the timer is running. They can Ctrl+C and re-attach with `pomo watch`.
+5. **Default commands are non-blocking.** `start`, `run`, and `continue` print status and return immediately; use `pomo watch` or `--watch` only when a visible foreground countdown is useful.
 
 ## MCP Server
 
@@ -146,7 +164,7 @@ pomo plan --file today-plan.json
 pomo backlog
 # → show user the list, ask which to start
 
-pomo run --position 1
+pomo start --position 1
 ```
 
 ### Resume after a break

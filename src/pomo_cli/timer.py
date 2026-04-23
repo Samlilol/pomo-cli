@@ -34,7 +34,7 @@ def run_countdown(
             return
 
         if status.remaining_seconds <= 0:
-            service.close_active_session(now=current_time)
+            service.close_active_session(now=current_time, task_id=task_id)
             if rendered_progress:
                 stream.write("\n")
             stream.write("00:00\n")

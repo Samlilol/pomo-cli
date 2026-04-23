@@ -49,14 +49,11 @@ class PomoStore:
                 )
                 """
             )
-            connection.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS sessions_single_active
-                ON sessions (1)
-                WHERE ended_at IS NULL
-                """
-            )
+            self._ensure_parallel_sessions(connection)
             self._ensure_task_columns(connection)
+
+    def _ensure_parallel_sessions(self, connection: sqlite3.Connection) -> None:
+        connection.execute("DROP INDEX IF EXISTS sessions_single_active")
 
     def _ensure_task_columns(self, connection: sqlite3.Connection) -> None:
         rows = connection.execute("PRAGMA table_info(tasks)").fetchall()
@@ -187,25 +184,49 @@ class PomoStore:
         return self._task_record_from_row(row)
 
     def get_active_session(self) -> SessionRecord | None:
+        """Return the most recently started active session, or None."""
         with self._connect() as connection:
             row = connection.execute(
                 """
                 SELECT session_id, task_id, planned_minutes, started_at, ended_at, elapsed_seconds
                 FROM sessions
                 WHERE ended_at IS NULL
+                ORDER BY started_at DESC
                 LIMIT 1
                 """
             ).fetchone()
         if row is None:
             return None
-        return SessionRecord(
-            session_id=row[0],
-            task_id=row[1],
-            planned_minutes=row[2],
-            started_at=datetime.fromisoformat(row[3]),
-            ended_at=datetime.fromisoformat(row[4]) if row[4] else None,
-            elapsed_seconds=row[5],
-        )
+        return self._session_record_from_row(row)
+
+    def get_active_sessions(self) -> list[SessionRecord]:
+        """Return all active sessions, most recently started first."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT session_id, task_id, planned_minutes, started_at, ended_at, elapsed_seconds
+                FROM sessions
+                WHERE ended_at IS NULL
+                ORDER BY started_at DESC
+                """
+            ).fetchall()
+        return [self._session_record_from_row(row) for row in rows]
+
+    def get_active_session_for_task(self, task_id: str) -> SessionRecord | None:
+        """Return the open session for a specific task, or None."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT session_id, task_id, planned_minutes, started_at, ended_at, elapsed_seconds
+                FROM sessions
+                WHERE task_id = ? AND ended_at IS NULL
+                LIMIT 1
+                """,
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._session_record_from_row(row)
 
     def task_exists(self, task_id: str) -> bool:
         with self._connect() as connection:
@@ -444,14 +465,7 @@ class PomoStore:
             ).fetchone()
         if row is None:
             return None
-        return SessionRecord(
-            session_id=row[0],
-            task_id=row[1],
-            planned_minutes=row[2],
-            started_at=datetime.fromisoformat(row[3]),
-            ended_at=datetime.fromisoformat(row[4]) if row[4] else None,
-            elapsed_seconds=row[5],
-        )
+        return self._session_record_from_row(row)
 
     def get_completed_tasks_for_date(self, day: str) -> list[TaskRecord]:
         start = f"{day}T00:00:00"
@@ -546,6 +560,17 @@ class PomoStore:
                 (start, end),
             ).fetchone()
         return int(row[0]) if row is not None else 0
+
+    @staticmethod
+    def _session_record_from_row(row: tuple[object, ...]) -> SessionRecord:
+        return SessionRecord(
+            session_id=row[0],
+            task_id=row[1],
+            planned_minutes=row[2],
+            started_at=datetime.fromisoformat(row[3]),
+            ended_at=datetime.fromisoformat(row[4]) if row[4] else None,
+            elapsed_seconds=row[5],
+        )
 
     @staticmethod
     def _task_record_from_row(row: tuple[object, ...]) -> TaskRecord:

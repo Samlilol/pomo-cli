@@ -53,7 +53,6 @@ class PomoService:
         planned_minutes: int,
         now: datetime,
     ) -> StatusPayload:
-        self._assert_no_running_session()
         task_id = self._next_task_id(now)
         self.store.create_task_with_session(
             task_id=task_id,
@@ -64,7 +63,7 @@ class PomoService:
             planned_minutes=planned_minutes,
             started_at=now,
         )
-        return self.get_status(now=now)
+        return self.get_task_status(task_id, now=now)
 
     def start_existing_task(
         self,
@@ -73,8 +72,8 @@ class PomoService:
         planned_minutes: int,
         now: datetime,
     ) -> StatusPayload:
-        self._assert_no_running_session()
         task = self._resolve_task(task_ref=task_ref, use_latest=use_latest)
+        self._assert_task_not_running(task.task_id)
         self._assert_task_not_completed(task, "cannot start a completed task")
         self.store.update_task_state_with_new_session(
             task_id=task.task_id,
@@ -85,7 +84,7 @@ class PomoService:
             planned_minutes=planned_minutes,
             started_at=now,
         )
-        return self.get_status(now=now)
+        return self.get_task_status(task.task_id, now=now)
 
     def continue_task(
         self,
@@ -93,8 +92,8 @@ class PomoService:
         planned_minutes: int,
         now: datetime,
     ) -> StatusPayload:
-        self._assert_no_running_session()
         task = self._resolve_task(task_ref=task_ref, use_latest=task_ref is None)
+        self._assert_task_not_running(task.task_id)
         self._assert_task_not_completed(task, "cannot start a completed task")
         self.store.update_task_state_with_new_session(
             task_id=task.task_id,
@@ -105,7 +104,7 @@ class PomoService:
             planned_minutes=planned_minutes,
             started_at=now,
         )
-        return self.get_status(now=now)
+        return self.get_task_status(task.task_id, now=now)
 
     def run_planned_task(
         self,
@@ -114,12 +113,12 @@ class PomoService:
         planned_minutes: int | None,
         now: datetime,
     ) -> StatusPayload:
-        self._assert_no_running_session()
         task = self._resolve_planned_task(
             task_ref=task_ref,
             position=position,
             day=now.date().isoformat(),
         )
+        self._assert_task_not_running(task.task_id)
         session_minutes = planned_minutes if planned_minutes is not None else task.estimate_minutes
         if session_minutes is None or session_minutes <= 0:
             raise RuntimeError("planned backlog task is missing a valid estimate")
@@ -133,10 +132,13 @@ class PomoService:
             planned_minutes=session_minutes,
             started_at=now,
         )
-        return self.get_status(now=now)
+        return self.get_task_status(task.task_id, now=now)
 
-    def close_active_session(self, now: datetime) -> StatusPayload:
-        session = self.store.get_active_session()
+    def close_active_session(self, now: datetime, task_id: str | None = None) -> StatusPayload:
+        if task_id is not None:
+            session = self.store.get_active_session_for_task(task_id)
+        else:
+            session = self.store.get_active_session()
         if session is None:
             raise RuntimeError("no active session")
 
@@ -160,8 +162,8 @@ class PomoService:
     ) -> StatusPayload | SessionlessStatusPayload:
         task = self._resolve_task(task_ref=task_ref, use_latest=use_latest)
         self._assert_task_not_completed(task, "task is already completed")
-        active_session = self.store.get_active_session()
-        if active_session is not None and active_session.task_id == task.task_id:
+        active_session = self.store.get_active_session_for_task(task.task_id)
+        if active_session is not None:
             elapsed_seconds = max(0, int((now - active_session.started_at).total_seconds()))
             self.store.finalize_session(
                 task_id=task.task_id,
@@ -191,10 +193,18 @@ class PomoService:
         )
         return self.get_task_status(task.task_id, now=now)
 
+    def get_all_active_statuses(self, now: datetime | None = None) -> list[StatusPayload]:
+        """Return status for every currently active session, most recently started first."""
+        return [
+            self.get_task_status(s.task_id, now=now)
+            for s in self.store.get_active_sessions()
+        ]
+
     def get_status(self, now: datetime | None = None) -> StatusPayload | SessionlessStatusPayload:
-        active_session = self.store.get_active_session()
-        if active_session is not None:
-            return self.get_task_status(active_session.task_id, now=now)
+        active_sessions = self.store.get_active_sessions()
+        if active_sessions:
+            # Return most recently started active session
+            return self.get_task_status(active_sessions[0].task_id, now=now)
 
         latest_worked = self.store.get_latest_worked_task()
         if latest_worked is not None:
@@ -303,9 +313,9 @@ class PomoService:
     def backlog_for_date(self, day: str) -> list[BacklogEntry]:
         return self.store.list_backlog_entries_for_date(day)
 
-    def _assert_no_running_session(self) -> None:
-        if self.store.get_active_session() is not None:
-            raise RuntimeError("an active session is already running")
+    def _assert_task_not_running(self, task_id: str) -> None:
+        if self.store.get_active_session_for_task(task_id) is not None:
+            raise RuntimeError("this task already has an active session")
 
     def _resolve_task(self, task_ref: str | None, use_latest: bool) -> TaskRecord:
         if use_latest:
@@ -334,7 +344,10 @@ class PomoService:
             raise RuntimeError("task reference is required")
 
         if task.state != "planned":
-            raise RuntimeError("run only works for planned backlog tasks; use start or continue")
+            raise RuntimeError(
+                "planned task startup only works for planned backlog tasks; "
+                "use start --task for ad hoc tasks or continue for worked tasks"
+            )
         return task
 
     @staticmethod

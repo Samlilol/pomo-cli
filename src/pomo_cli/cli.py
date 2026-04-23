@@ -25,13 +25,33 @@ def positive_int(value: str) -> int:
     return minutes
 
 
+class PomoArgumentParser(argparse.ArgumentParser):
+    def parse_args(
+        self,
+        args: list[str] | None = None,
+        namespace: argparse.Namespace | None = None,
+    ) -> argparse.Namespace:
+        parsed = super().parse_args(args, namespace)
+        if (
+            getattr(parsed, "command", None) == "start"
+            and getattr(parsed, "task", None) is not None
+            and getattr(parsed, "minutes", None) is None
+        ):
+            self.error("start --task requires --minutes")
+        return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="pomo")
+    parser = PomoArgumentParser(prog="pomo")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     start_parser = subparsers.add_parser("start")
-    start_parser.add_argument("--task", required=True)
-    start_parser.add_argument("--minutes", type=positive_int, required=True)
+    start_group = start_parser.add_mutually_exclusive_group(required=True)
+    start_group.add_argument("--task")
+    start_group.add_argument("--task-id")
+    start_group.add_argument("--position", type=positive_int)
+    start_parser.add_argument("--minutes", type=positive_int)
+    start_parser.add_argument("--watch", action="store_true")
 
     plan_parser = subparsers.add_parser("plan")
     plan_parser.add_argument("--file", required=True)
@@ -41,10 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_group.add_argument("--task-id")
     run_group.add_argument("--position", type=positive_int)
     run_parser.add_argument("--minutes", type=positive_int)
+    run_parser.add_argument("--watch", action="store_true")
 
     continue_parser = subparsers.add_parser("continue")
     continue_parser.add_argument("--task-id")
     continue_parser.add_argument("--minutes", type=positive_int, required=True)
+    continue_parser.add_argument("--watch", action="store_true")
 
     complete_parser = subparsers.add_parser("complete")
     complete_group = complete_parser.add_mutually_exclusive_group(required=True)
@@ -135,6 +157,15 @@ def format_sessionless_status(status: SessionlessStatusPayload) -> str:
     return " ".join(parts)
 
 
+def format_multi_status(statuses: list[StatusPayload]) -> str:
+    lines = [f"{len(statuses)} sessions running:"]
+    for s in statuses:
+        lines.append(
+            f"  [{s.task_id}] {s.task_title} — {format_duration(s.total_elapsed_seconds)} total"
+        )
+    return "\n".join(lines)
+
+
 def format_status_output(
     status: StatusPayload | SessionlessStatusPayload,
 ) -> str:
@@ -194,6 +225,20 @@ def run_watch_loop(
     return 0
 
 
+def print_status_and_maybe_watch(
+    status: StatusPayload,
+    watch: bool,
+    service: PomoService,
+    stdout: TextIO,
+    now_fn: Callable[[], datetime],
+    sleep_fn: Callable[[float], None],
+) -> int:
+    print(format_status(status), file=stdout)
+    if watch:
+        return run_watch_loop(service, status.task_id, stdout, now_fn, sleep_fn)
+    return 0
+
+
 def main(
     argv: list[str] | None = None,
     stdout: TextIO | None = None,
@@ -212,16 +257,30 @@ def main(
     if args.command == "start":
         current_time = now_fn()
         try:
-            status = service.start_new_task(
-                task_title=args.task,
-                planned_minutes=args.minutes,
-                now=current_time,
-            )
+            if args.task is not None:
+                status = service.start_new_task(
+                    task_title=args.task,
+                    planned_minutes=args.minutes,
+                    now=current_time,
+                )
+            else:
+                status = service.run_planned_task(
+                    task_ref=args.task_id,
+                    position=args.position,
+                    planned_minutes=args.minutes,
+                    now=current_time,
+                )
         except (RuntimeError, KeyError) as error:
             print(str(error), file=stderr)
             return 1
-        print(format_status(status), file=stdout)
-        return run_watch_loop(service, status.task_id, stdout, now_fn, sleep_fn)
+        return print_status_and_maybe_watch(
+            status,
+            args.watch,
+            service,
+            stdout,
+            now_fn,
+            sleep_fn,
+        )
 
     if args.command == "plan":
         try:
@@ -250,8 +309,14 @@ def main(
         except (RuntimeError, KeyError) as error:
             print(str(error), file=stderr)
             return 1
-        print(format_status(status), file=stdout)
-        return run_watch_loop(service, status.task_id, stdout, now_fn, sleep_fn)
+        return print_status_and_maybe_watch(
+            status,
+            args.watch,
+            service,
+            stdout,
+            now_fn,
+            sleep_fn,
+        )
 
     if args.command == "continue":
         try:
@@ -263,17 +328,23 @@ def main(
         except (RuntimeError, KeyError) as error:
             print(str(error), file=stderr)
             return 1
-        print(format_status(status), file=stdout)
-        return run_watch_loop(service, status.task_id, stdout, now_fn, sleep_fn)
+        return print_status_and_maybe_watch(
+            status,
+            args.watch,
+            service,
+            stdout,
+            now_fn,
+            sleep_fn,
+        )
 
     if args.command == "watch":
-        active_session = service.store.get_active_session()
-        if active_session is None:
+        active_sessions = service.store.get_active_sessions()
+        if not active_sessions:
             print("no active session", file=stderr)
             return 1
         return run_watch_loop(
             service,
-            active_session.task_id,
+            active_sessions[0].task_id,
             stdout,
             now_fn,
             sleep_fn,
@@ -281,11 +352,17 @@ def main(
 
     if args.command == "status":
         try:
-            status = service.get_status()
+            active_statuses = service.get_all_active_statuses(now_fn())
+            if len(active_statuses) > 1:
+                print(format_multi_status(active_statuses), file=stdout)
+            elif active_statuses:
+                print(format_status(active_statuses[0]), file=stdout)
+            else:
+                status = service.get_status()
+                print(format_status_output(status), file=stdout)
         except RuntimeError as error:
             print(str(error), file=stderr)
             return 1
-        print(format_status_output(status), file=stdout)
         return 0
 
     if args.command == "complete":
