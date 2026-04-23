@@ -1,6 +1,8 @@
 # pomo-cli
 
-Local Pomodoro CLI for agent-assisted workflows. SQLite-backed, pure Python, no dependencies beyond the standard library.
+Local work observability runtime for agent-assisted workflows. SQLite-backed, pure Python, no dependencies beyond the standard library.
+
+The canonical product definition lives in `PRD.md`.
 
 ## Dev Setup
 
@@ -34,10 +36,10 @@ timer.py     — run_countdown(): foreground terminal countdown loop
 
 ### Key constraints
 
-- **One active session at a time** — enforced by a SQLite partial unique index on `sessions WHERE ended_at IS NULL`. Any command that opens a new session calls `_assert_no_running_session()` first.
+- **A task may not have more than one active session at a time** — the runtime allows multiple active sessions across different tasks, but `run` / `continue` reject opening a second active session for the same task.
 - **Task IDs are CLI-owned** — format `YYYY-MMDD-NNNN`, generated from `count_tasks_created_on_date`. Agents must reuse the returned `task_id` to continue or complete a task.
 - **Elapsed time uses actual seconds**, not planned minutes. `finalize_session` accumulates real elapsed time into `tasks.total_elapsed_seconds`.
-- **Summary buckets by `completed_at`** — only explicitly completed tasks appear in `pomo summary`.
+- **Summary is worked-today plus completed-today** — `pomo summary` reports tasks worked today, tasks completed today, total time spent today, and per-task elapsed entries.
 
 ### State machine
 
