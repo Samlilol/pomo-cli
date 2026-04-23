@@ -1,6 +1,5 @@
 import importlib.util
 import io
-import sqlite3
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -85,6 +84,7 @@ class McpServerTests(unittest.TestCase):
                 "start_task",
                 "complete_task",
                 "get_status",
+                "list_active_sessions",
                 "get_summary",
                 "get_backlog",
                 "plan_tasks",
@@ -102,6 +102,62 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(payload["task_title"], "write docs")
         self.assertEqual(payload["planned_minutes"], 25)
         self.assertEqual(payload["starts_at"], "2026-04-10T09:00:00")
+
+    def test_start_task_supports_planned_task_id_and_position(self) -> None:
+        service = self._make_service()
+        planned = service.plan_tasks(
+            parent_title="Ship pomo update",
+            subtasks=[
+                {
+                    "task_title": "review failing tests",
+                    "estimate_minutes": 15,
+                    "priority": "high",
+                },
+                {
+                    "task_title": "write release note",
+                    "estimate_minutes": 10,
+                    "priority": "medium",
+                },
+            ],
+            now=datetime(2026, 4, 10, 9, 0, 0),
+        )
+        server = self._create_server(
+            service=service,
+            now_fn=lambda: datetime(2026, 4, 10, 9, 30, 0),
+        )
+
+        by_task_id = server._pomo_tools["start_task"](task_id=planned[0].task_id)
+        service.close_active_session(now=datetime(2026, 4, 10, 9, 31, 0))
+        by_position = server._pomo_tools["start_task"](position=2, planned_minutes=20)
+
+        self.assertEqual(by_task_id["task_title"], "review failing tests")
+        self.assertEqual(by_task_id["planned_minutes"], 15)
+        self.assertEqual(by_position["task_title"], "write release note")
+        self.assertEqual(by_position["planned_minutes"], 20)
+
+    def test_start_task_requires_exactly_one_selector(self) -> None:
+        server = self._create_server(service=self._make_service())
+
+        missing = server._pomo_tools["start_task"]()
+        conflicting = server._pomo_tools["start_task"](
+            task_title="write docs",
+            planned_minutes=25,
+            position=1,
+        )
+        missing_minutes = server._pomo_tools["start_task"](task_title="write docs")
+
+        self.assertEqual(
+            missing,
+            {"error": "provide exactly one of task_title, task_id, or position"},
+        )
+        self.assertEqual(
+            conflicting,
+            {"error": "provide exactly one of task_title, task_id, or position"},
+        )
+        self.assertEqual(
+            missing_minutes,
+            {"error": "planned_minutes is required when task_title is provided"},
+        )
 
     def test_get_summary_uses_now_fn_when_date_is_omitted(self) -> None:
         service = self._make_service()
@@ -222,14 +278,28 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(by_position["task_title"], "write release note")
         self.assertEqual(by_position["planned_minutes"], 20)
 
-    def test_double_start_returns_consistent_active_session_error(self) -> None:
+    def test_double_start_creates_parallel_sessions(self) -> None:
         server = self._create_server(service=self._make_service())
 
         first = server._pomo_tools["start_task"]("write docs", 25)
         second = server._pomo_tools["start_task"]("review tests", 25)
 
         self.assertEqual(first["state"], "running")
-        self.assertEqual(second, {"error": "an active session is already running"})
+        self.assertEqual(second["state"], "running")
+        self.assertNotEqual(first["task_id"], second["task_id"])
+
+    def test_list_active_sessions_returns_all_running(self) -> None:
+        server = self._create_server(service=self._make_service())
+        server._pomo_tools["start_task"]("write docs", 25)
+        server._pomo_tools["start_task"]("review tests", 25)
+
+        result = server._pomo_tools["list_active_sessions"]()
+
+        self.assertIsInstance(result, list)
+        self.assertEqual(len(result), 2)
+        titles = {s["task_title"] for s in result}
+        self.assertIn("write docs", titles)
+        self.assertIn("review tests", titles)
 
     def test_complete_task_requires_exactly_one_selector(self) -> None:
         server = self._create_server(service=self._make_service())
@@ -239,16 +309,6 @@ class McpServerTests(unittest.TestCase):
 
         self.assertEqual(missing, {"error": "provide task_id or use_latest=true"})
         self.assertEqual(conflicting, {"error": "task_id and use_latest cannot be combined"})
-
-    def test_integrity_error_is_normalized_to_active_session_error(self) -> None:
-        service = self._make_service()
-        server = self._create_server(service=service)
-
-        with patch.object(service, "start_new_task", side_effect=sqlite3.IntegrityError("UNIQUE constraint failed: index 'sessions_single_active'")):
-            payload = server._pomo_tools["start_task"]("write docs", 25)
-
-        self.assertEqual(payload, {"error": "an active session is already running"})
-
 
 if __name__ == "__main__":
     unittest.main()

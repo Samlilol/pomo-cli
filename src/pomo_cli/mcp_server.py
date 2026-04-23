@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import sqlite3
 import sys
 from datetime import datetime
 from typing import Any, Callable, Type
@@ -54,6 +53,18 @@ def _clean_task_id(task_id: str | None) -> str | None:
     return text
 
 
+def _clean_position(position: int | None) -> int | None:
+    if position is None:
+        return None
+    return _require_positive_int(position, "position")
+
+
+def _clean_planned_minutes(planned_minutes: int | None) -> int | None:
+    if planned_minutes is None:
+        return None
+    return _require_positive_int(planned_minutes, "planned_minutes")
+
+
 def _require_non_empty_text(value: object, field_name: str) -> str:
     text = str(value).strip()
     if not text:
@@ -83,10 +94,6 @@ def _resolve_day(day: str | None, now_fn: Callable[[], datetime]) -> str:
 
 
 def _normalize_known_error(error: BaseException) -> dict[str, str]:
-    if isinstance(error, sqlite3.IntegrityError):
-        if "sessions_single_active" in str(error):
-            return _error_payload(RuntimeError("an active session is already running"))
-        raise error
     if isinstance(error, (RuntimeError, KeyError, ValueError)):
         return _error_payload(error)
     raise error
@@ -101,13 +108,36 @@ def create_server(
     mcp = FastMCP("pomo", json_response=True)
 
     @mcp.tool()
-    def start_task(task_title: str, planned_minutes: int) -> dict[str, Any]:
+    def start_task(
+        task_title: str | None = None,
+        planned_minutes: int | None = None,
+        task_id: str | None = None,
+        position: int | None = None,
+    ) -> dict[str, Any]:
         try:
-            payload = service.start_new_task(
-                task_title=_require_non_empty_text(task_title, "task_title"),
-                planned_minutes=_require_positive_int(planned_minutes, "planned_minutes"),
-                now=now_fn(),
+            selected = sum(
+                selector is not None for selector in (task_title, task_id, position)
             )
+            if selected != 1:
+                raise ValueError("provide exactly one of task_title, task_id, or position")
+            if task_title is not None:
+                if planned_minutes is None:
+                    raise ValueError("planned_minutes is required when task_title is provided")
+                payload = service.start_new_task(
+                    task_title=_require_non_empty_text(task_title, "task_title"),
+                    planned_minutes=_require_positive_int(
+                        planned_minutes,
+                        "planned_minutes",
+                    ),
+                    now=now_fn(),
+                )
+            else:
+                payload = service.run_planned_task(
+                    task_ref=_clean_task_id(task_id),
+                    position=_clean_position(position),
+                    planned_minutes=_clean_planned_minutes(planned_minutes),
+                    now=now_fn(),
+                )
         except BaseException as error:
             return _normalize_known_error(error)
         return _to_dict(payload)
@@ -135,6 +165,14 @@ def create_server(
     def get_status() -> dict[str, Any]:
         try:
             payload = service.get_status(now=now_fn())
+        except BaseException as error:
+            return _normalize_known_error(error)
+        return _to_dict(payload)
+
+    @mcp.tool()
+    def list_active_sessions() -> list[dict[str, Any]] | dict[str, str]:
+        try:
+            payload = service.get_all_active_statuses(now=now_fn())
         except BaseException as error:
             return _normalize_known_error(error)
         return _to_dict(payload)
@@ -181,16 +219,8 @@ def create_server(
                 raise ValueError("provide exactly one of task_id or position")
             payload = service.run_planned_task(
                 task_ref=_clean_task_id(task_id),
-                position=(
-                    None
-                    if position is None
-                    else _require_positive_int(position, "position")
-                ),
-                planned_minutes=(
-                    None
-                    if planned_minutes is None
-                    else _require_positive_int(planned_minutes, "planned_minutes")
-                ),
+                position=_clean_position(position),
+                planned_minutes=_clean_planned_minutes(planned_minutes),
                 now=now_fn(),
             )
         except BaseException as error:
@@ -216,6 +246,7 @@ def create_server(
         "start_task": start_task,
         "complete_task": complete_task,
         "get_status": get_status,
+        "list_active_sessions": list_active_sessions,
         "get_summary": get_summary,
         "get_backlog": get_backlog,
         "plan_tasks": plan_tasks,

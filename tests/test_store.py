@@ -58,7 +58,7 @@ class StoreTests(unittest.TestCase):
                 started_at=datetime(2026, 4, 2, 10, 0, 0),
             )
 
-    def test_insert_session_rejects_second_active_session(self) -> None:
+    def test_insert_session_allows_multiple_active_sessions(self) -> None:
         self.store.initialize()
         self.store.insert_task(
             task_id="task-1",
@@ -78,14 +78,49 @@ class StoreTests(unittest.TestCase):
             planned_minutes=30,
             started_at=datetime(2026, 4, 2, 10, 0, 0),
         )
+        self.store.insert_session(
+            session_id="session-2",
+            task_id="task-2",
+            planned_minutes=25,
+            started_at=datetime(2026, 4, 2, 10, 2, 0),
+        )
 
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.store.insert_session(
-                session_id="session-2",
-                task_id="task-2",
-                planned_minutes=25,
-                started_at=datetime(2026, 4, 2, 10, 2, 0),
-            )
+        sessions = self.store.get_active_sessions()
+        self.assertEqual(len(sessions), 2)
+
+    def test_get_active_sessions_empty_returns_empty_list(self) -> None:
+        self.store.initialize()
+
+        sessions = self.store.get_active_sessions()
+
+        self.assertEqual(sessions, [])
+
+    def test_get_active_sessions_returns_all_open_sessions_most_recent_first(self) -> None:
+        self.store.initialize()
+        self.store.insert_task("t1", "task one", "running", datetime(2026, 4, 2, 10, 0, 0))
+        self.store.insert_task("t2", "task two", "running", datetime(2026, 4, 2, 10, 1, 0))
+        self.store.insert_session("s1", "t1", 25, datetime(2026, 4, 2, 10, 0, 0))
+        self.store.insert_session("s2", "t2", 30, datetime(2026, 4, 2, 10, 5, 0))
+
+        sessions = self.store.get_active_sessions()
+
+        self.assertEqual(len(sessions), 2)
+        self.assertEqual(sessions[0].session_id, "s2")  # started later
+        self.assertEqual(sessions[1].session_id, "s1")
+
+    def test_get_active_session_for_task_returns_open_session(self) -> None:
+        self.store.initialize()
+        self.store.insert_task("t1", "task one", "running", datetime(2026, 4, 2, 10, 0, 0))
+        self.store.insert_task("t2", "task two", "running", datetime(2026, 4, 2, 10, 1, 0))
+        self.store.insert_session("s1", "t1", 25, datetime(2026, 4, 2, 10, 0, 0))
+        self.store.insert_session("s2", "t2", 30, datetime(2026, 4, 2, 10, 5, 0))
+
+        found = self.store.get_active_session_for_task("t1")
+        missing = self.store.get_active_session_for_task("t-unknown")
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found.session_id, "s1")
+        self.assertIsNone(missing)
 
     def test_list_task_time_entries_for_date_returns_finalized_session_totals(self) -> None:
         self.store.initialize()

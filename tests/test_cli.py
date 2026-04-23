@@ -72,6 +72,12 @@ class CliSmokeTests(unittest.TestCase):
         self.assertIsNone(args.task_id)
         self.assertEqual(args.minutes, 15)
 
+    def test_run_with_watch_parses(self) -> None:
+        args = build_parser().parse_args(["run", "--position", "1", "--watch"])
+
+        self.assertEqual(args.command, "run")
+        self.assertTrue(args.watch)
+
     def test_watch_parses(self) -> None:
         args = build_parser().parse_args(["watch"])
 
@@ -83,6 +89,33 @@ class CliSmokeTests(unittest.TestCase):
         self.assertEqual(args.command, "start")
         self.assertEqual(args.task, "Write tests")
         self.assertEqual(args.minutes, 25)
+        self.assertFalse(args.watch)
+
+    def test_start_with_position_parses(self) -> None:
+        args = build_parser().parse_args(["start", "--position", "1"])
+
+        self.assertEqual(args.command, "start")
+        self.assertEqual(args.position, 1)
+        self.assertIsNone(args.task)
+        self.assertIsNone(args.task_id)
+        self.assertIsNone(args.minutes)
+
+    def test_start_with_task_id_parses(self) -> None:
+        args = build_parser().parse_args(["start", "--task-id", "2026-0604-0001"])
+
+        self.assertEqual(args.command, "start")
+        self.assertEqual(args.task_id, "2026-0604-0001")
+        self.assertIsNone(args.task)
+        self.assertIsNone(args.position)
+        self.assertIsNone(args.minutes)
+
+    def test_start_with_watch_parses(self) -> None:
+        args = build_parser().parse_args(
+            ["start", "--task", "Write tests", "--minutes", "25", "--watch"]
+        )
+
+        self.assertEqual(args.command, "start")
+        self.assertTrue(args.watch)
 
     def test_continue_without_task_id_parses(self) -> None:
         args = build_parser().parse_args(["continue", "--minutes", "25"])
@@ -97,6 +130,12 @@ class CliSmokeTests(unittest.TestCase):
         self.assertEqual(args.command, "continue")
         self.assertEqual(args.task_id, "2026-0604-0001")
         self.assertEqual(args.minutes, 25)
+
+    def test_continue_with_watch_parses(self) -> None:
+        args = build_parser().parse_args(["continue", "--minutes", "25", "--watch"])
+
+        self.assertEqual(args.command, "continue")
+        self.assertTrue(args.watch)
 
     def test_complete_with_task_id_parses(self) -> None:
         args = build_parser().parse_args(["complete", "--task-id", "123"])
@@ -116,9 +155,15 @@ class CliSmokeTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["start", "--minutes", "25"])
 
-    def test_start_rejects_task_id_selector(self) -> None:
+    def test_start_rejects_multiple_selectors(self) -> None:
         with self.assertRaises(SystemExit):
-            build_parser().parse_args(["start", "--task-id", "123", "--minutes", "25"])
+            build_parser().parse_args(
+                ["start", "--task", "Write tests", "--task-id", "123", "--minutes", "25"]
+            )
+
+    def test_start_with_task_rejects_missing_minutes(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(["start", "--task", "Write tests"])
 
     def test_start_rejects_zero_minutes(self) -> None:
         with self.assertRaises(SystemExit):
@@ -246,7 +291,32 @@ class CliFlowTests(unittest.TestCase):
         store.initialize()
         return PomoService(store)
 
-    def test_start_runs_countdown_and_closes_the_session(self) -> None:
+    def test_start_with_task_returns_immediately_and_leaves_session_running(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["start", "--task", "write 500-word essay", "--minutes", "1"],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: datetime(2026, 4, 2, 14, 0, 0),
+                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(AssertionError("should not watch")),
+                )
+
+            service = self._seed_store(temp_home)
+            final_status = service.get_status(now=datetime(2026, 4, 2, 14, 0, 5))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(final_status.state, "running")
+        self.assertEqual(final_status.total_elapsed_seconds, 0)
+        self.assertIn("state: running", stdout.getvalue())
+        self.assertIn("task_title: write 500-word essay", stdout.getvalue())
+        self.assertNotIn("\n00:00\n", stdout.getvalue())
+
+    def test_start_with_watch_runs_countdown_and_closes_the_session(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
             stdout = io.StringIO()
             stderr = io.StringIO()
@@ -260,7 +330,7 @@ class CliFlowTests(unittest.TestCase):
 
             with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
                 exit_code = main(
-                    ["start", "--task", "write 500-word essay", "--minutes", "1"],
+                    ["start", "--task", "write 500-word essay", "--minutes", "1", "--watch"],
                     stdout=stdout,
                     stderr=stderr,
                     now_fn=lambda: next(ticks),
@@ -291,7 +361,7 @@ class CliFlowTests(unittest.TestCase):
 
             with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
                 exit_code = main(
-                    ["start", "--task", "interrupt me", "--minutes", "1"],
+                    ["start", "--task", "interrupt me", "--minutes", "1", "--watch"],
                     stdout=stdout,
                     stderr=stderr,
                     now_fn=lambda: next(ticks),
@@ -352,6 +422,34 @@ class CliFlowTests(unittest.TestCase):
 
             stdout = io.StringIO()
             stderr = io.StringIO()
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["continue", "--minutes", "10"],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: datetime(2026, 4, 6, 10, 0, 0),
+                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(AssertionError("should not watch")),
+                )
+
+            refreshed = service.get_status(now=datetime(2026, 4, 6, 10, 0, 5))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(refreshed.task_id, first.task_id)
+        self.assertEqual(refreshed.state, "running")
+        self.assertIn(f"task_id: {first.task_id}", stdout.getvalue())
+
+    def test_continue_with_watch_interrupt_leaves_the_session_running(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            first = service.start_new_task(
+                task_title="write draft",
+                planned_minutes=25,
+                now=datetime(2026, 4, 6, 9, 0, 0),
+            )
+            service.close_active_session(now=datetime(2026, 4, 6, 9, 25, 0))
+            stdout = io.StringIO()
+            stderr = io.StringIO()
             ticks = iter(
                 [
                     datetime(2026, 4, 6, 10, 0, 0),
@@ -361,7 +459,7 @@ class CliFlowTests(unittest.TestCase):
 
             with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
                 exit_code = main(
-                    ["continue", "--minutes", "10"],
+                    ["continue", "--minutes", "10", "--watch"],
                     stdout=stdout,
                     stderr=stderr,
                     now_fn=lambda: next(ticks),
@@ -373,7 +471,6 @@ class CliFlowTests(unittest.TestCase):
         self.assertEqual(exit_code, 130)
         self.assertEqual(refreshed.task_id, first.task_id)
         self.assertEqual(refreshed.state, "running")
-        self.assertIn(f"task_id: {first.task_id}", stdout.getvalue())
 
     def test_watch_returns_error_when_no_session_is_running(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
@@ -482,6 +579,103 @@ class CliFlowTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("invalid plan file", stderr.getvalue().lower())
 
+    def test_start_with_position_starts_planned_task_with_stored_estimate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    },
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["start", "--position", "1"],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: datetime(2026, 4, 10, 9, 30, 0),
+                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(AssertionError("should not watch")),
+                )
+
+            refreshed = service.get_status(now=datetime(2026, 4, 10, 9, 30, 5))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(refreshed.task_title, "review failing tests")
+        self.assertEqual(refreshed.state, "running")
+        self.assertIn("planned_minutes: 15", stdout.getvalue())
+
+    def test_start_with_position_allows_minutes_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    },
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["start", "--position", "1", "--minutes", "30"],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: datetime(2026, 4, 10, 9, 30, 0),
+                )
+
+            refreshed = service.get_status(now=datetime(2026, 4, 10, 9, 30, 5))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(refreshed.task_title, "review failing tests")
+        self.assertEqual(refreshed.planned_minutes, 30)
+        self.assertIn("planned_minutes: 30", stdout.getvalue())
+
+    def test_start_with_task_id_starts_planned_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_home:
+            service = self._seed_store(temp_home)
+            planned = service.plan_tasks(
+                parent_title="Ship pomo update",
+                subtasks=[
+                    {
+                        "task_title": "review failing tests",
+                        "estimate_minutes": 15,
+                        "priority": "high",
+                    },
+                ],
+                now=datetime(2026, 4, 10, 9, 0, 0),
+            )[0]
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
+                exit_code = main(
+                    ["start", "--task-id", planned.task_id],
+                    stdout=stdout,
+                    stderr=stderr,
+                    now_fn=lambda: datetime(2026, 4, 10, 9, 30, 0),
+                )
+
+            refreshed = service.get_status(now=datetime(2026, 4, 10, 9, 30, 5))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(refreshed.task_id, planned.task_id)
+        self.assertEqual(refreshed.state, "running")
+
     def test_run_with_task_id_starts_a_planned_task(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:
             service = self._seed_store(temp_home)
@@ -498,25 +692,19 @@ class CliFlowTests(unittest.TestCase):
             )[0]
             stdout = io.StringIO()
             stderr = io.StringIO()
-            ticks = iter(
-                [
-                    datetime(2026, 4, 10, 9, 30, 0),
-                    datetime(2026, 4, 10, 9, 30, 5),
-                ]
-            )
 
             with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
                 exit_code = main(
                     ["run", "--task-id", planned.task_id],
                     stdout=stdout,
                     stderr=stderr,
-                    now_fn=lambda: next(ticks),
-                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+                    now_fn=lambda: datetime(2026, 4, 10, 9, 30, 0),
+                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(AssertionError("should not watch")),
                 )
 
             refreshed = service.get_status(now=datetime(2026, 4, 10, 9, 30, 5))
 
-        self.assertEqual(exit_code, 130)
+        self.assertEqual(exit_code, 0)
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(refreshed.task_id, planned.task_id)
         self.assertEqual(refreshed.state, "running")
@@ -544,25 +732,19 @@ class CliFlowTests(unittest.TestCase):
             )
             stdout = io.StringIO()
             stderr = io.StringIO()
-            ticks = iter(
-                [
-                    datetime(2026, 4, 10, 9, 30, 0),
-                    datetime(2026, 4, 10, 9, 30, 5),
-                ]
-            )
 
             with patch.dict(os.environ, {"HOME": temp_home}, clear=False):
                 exit_code = main(
                     ["run", "--position", "2"],
                     stdout=stdout,
                     stderr=stderr,
-                    now_fn=lambda: next(ticks),
-                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(KeyboardInterrupt()),
+                    now_fn=lambda: datetime(2026, 4, 10, 9, 30, 0),
+                    sleep_fn=lambda _seconds: (_ for _ in ()).throw(AssertionError("should not watch")),
                 )
 
             refreshed = service.get_status(now=datetime(2026, 4, 10, 9, 30, 5))
 
-        self.assertEqual(exit_code, 130)
+        self.assertEqual(exit_code, 0)
         self.assertEqual(refreshed.task_title, "write release note")
         self.assertIn("task_title: write release note", stdout.getvalue())
         self.assertIn("planned_minutes: 10", stdout.getvalue())
@@ -589,7 +771,7 @@ class CliFlowTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertEqual(stdout.getvalue(), "")
-        self.assertIn("run only works for planned backlog tasks", stderr.getvalue())
+        self.assertIn("planned task startup only works", stderr.getvalue())
 
     def test_status_returns_error_when_no_task_is_tracked(self) -> None:
         with tempfile.TemporaryDirectory() as temp_home:

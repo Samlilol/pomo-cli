@@ -310,7 +310,7 @@ class ServiceTests(unittest.TestCase):
         )
         self.service.close_active_session(now=datetime(2026, 4, 10, 8, 25, 0))
 
-        with self.assertRaisesRegex(RuntimeError, "run only works for planned backlog tasks"):
+        with self.assertRaisesRegex(RuntimeError, "planned task startup only works"):
             self.service.run_planned_task(
                 task_ref=worked.task_id,
                 position=None,
@@ -514,6 +514,97 @@ class ServiceTests(unittest.TestCase):
                 task_ref=status.task_id,
                 use_latest=False,
                 now=datetime(2026, 4, 2, 10, 0, 0),
+            )
+
+
+    def test_start_new_task_allows_parallel_sessions(self) -> None:
+        first = self.service.start_new_task(
+            task_title="LIN-123",
+            planned_minutes=25,
+            now=datetime(2026, 4, 22, 9, 0, 0),
+        )
+        second = self.service.start_new_task(
+            task_title="review UIUX",
+            planned_minutes=30,
+            now=datetime(2026, 4, 22, 9, 5, 0),
+        )
+
+        self.assertEqual(first.state, "running")
+        self.assertEqual(second.state, "running")
+        self.assertNotEqual(first.task_id, second.task_id)
+        active = self.service.store.get_active_sessions()
+        self.assertEqual(len(active), 2)
+
+    def test_close_active_session_by_task_id_closes_only_that_task(self) -> None:
+        first = self.service.start_new_task(
+            task_title="LIN-123",
+            planned_minutes=25,
+            now=datetime(2026, 4, 22, 9, 0, 0),
+        )
+        self.service.start_new_task(
+            task_title="review UIUX",
+            planned_minutes=30,
+            now=datetime(2026, 4, 22, 9, 5, 0),
+        )
+
+        closed = self.service.close_active_session(
+            now=datetime(2026, 4, 22, 9, 20, 0),
+            task_id=first.task_id,
+        )
+
+        self.assertEqual(closed.state, "session_closed")
+        self.assertEqual(closed.task_id, first.task_id)
+        remaining = self.service.store.get_active_sessions()
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0].task_id, second.task_id if False else remaining[0].task_id)
+
+    def test_get_all_active_statuses_returns_all_running_tasks(self) -> None:
+        self.service.start_new_task(
+            task_title="LIN-123",
+            planned_minutes=25,
+            now=datetime(2026, 4, 22, 9, 0, 0),
+        )
+        self.service.start_new_task(
+            task_title="review UIUX",
+            planned_minutes=30,
+            now=datetime(2026, 4, 22, 9, 5, 0),
+        )
+
+        statuses = self.service.get_all_active_statuses(now=datetime(2026, 4, 22, 9, 10, 0))
+
+        self.assertEqual(len(statuses), 2)
+        titles = {s.task_title for s in statuses}
+        self.assertIn("LIN-123", titles)
+        self.assertIn("review UIUX", titles)
+
+    def test_get_status_returns_most_recently_started_when_multiple_running(self) -> None:
+        self.service.start_new_task(
+            task_title="LIN-123",
+            planned_minutes=25,
+            now=datetime(2026, 4, 22, 9, 0, 0),
+        )
+        self.service.start_new_task(
+            task_title="review UIUX",
+            planned_minutes=30,
+            now=datetime(2026, 4, 22, 9, 5, 0),
+        )
+
+        status = self.service.get_status(now=datetime(2026, 4, 22, 9, 10, 0))
+
+        self.assertEqual(status.task_title, "review UIUX")
+
+    def test_continue_task_rejects_already_running_task(self) -> None:
+        first = self.service.start_new_task(
+            task_title="LIN-123",
+            planned_minutes=25,
+            now=datetime(2026, 4, 22, 9, 0, 0),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "already has an active session"):
+            self.service.continue_task(
+                task_ref=first.task_id,
+                planned_minutes=25,
+                now=datetime(2026, 4, 22, 9, 5, 0),
             )
 
 

@@ -2,7 +2,7 @@
 name: pomo
 description: Use when the user wants to start or resume a focus session, track work time, plan tasks, check what they worked on today, or manage their pomo-cli backlog. Triggers on phrases like "open pomo", "start a timer", "pomo 計時", "幫我開 pomo", "help me focus", "start a focus session", "mark it done", "complete the task", "what did I work on today", "pomo summary", "pomo status", or anything involving pomo-cli task management. ALSO triggers when the user's message expresses intent to work on something — ticket IDs (LIN-\d+, #\d+, PROJ-\d+), natural language ("help me review X", "let's work on Y", "build/fix/debug X"), or tasks surfaced from Slack/Linear MCP.
 metadata:
-  version: 2.0.0
+  version: 2.1.0
 ---
 
 # Pomo CLI Skill
@@ -24,7 +24,7 @@ which pomo
 If not found, fall back to running from the project directory:
 
 ```bash
-cd <repo-root> && python3 -m pomo_cli <subcommand>
+cd <repo-root> && PYTHONPATH=src python3 -m pomo_cli <subcommand>
 ```
 
 Or activate the venv if needed:
@@ -49,8 +49,12 @@ pip install "pomo-cli[mcp]"
 ```bash
 pomo start --task "<title>" --minutes <n>
 ```
-- This creates a new task, opens a live countdown in the terminal.
+- This creates a new task, starts tracking, prints status, and returns immediately.
 - **Save the `task_id` from the output** — you'll need it to continue or complete.
+- Add `--watch` only when you intentionally want a foreground countdown:
+```bash
+pomo start --task "<title>" --minutes <n> --watch
+```
 
 ### Plan a structured day from a JSON file
 ```bash
@@ -70,10 +74,12 @@ Priority must be: `high`, `medium`, or `low`.
 
 ### Start a planned backlog task
 ```bash
-pomo run --position 1              # by backlog position
-pomo run --task-id <id>            # by explicit task id
-pomo run --task-id <id> --minutes 30  # override the estimate
+pomo start --position 1                 # by backlog position
+pomo start --task-id <id>               # by explicit task id
+pomo start --task-id <id> --minutes 30  # override the estimate
 ```
+`pomo run` remains available as a backwards-compatible alias for planned tasks,
+but new workflows should use `pomo start`.
 
 ### View today's backlog
 ```bash
@@ -84,9 +90,10 @@ pomo backlog
 ```bash
 pomo continue --minutes <n>            # continues latest worked task
 pomo continue --task-id <id> --minutes <n>
+pomo continue --minutes <n> --watch    # continue and show countdown
 ```
 
-### Re-attach to the live countdown
+### Attach to the live countdown
 ```bash
 pomo watch
 ```
@@ -126,7 +133,7 @@ Shows tasks worked today, tasks completed today, total time spent today, and per
 3. Write a `today-plan.json` file.
 4. Run: `pomo plan --file today-plan.json`
 5. Show the backlog: `pomo backlog`
-6. When user picks a task: `pomo run --position <n>`
+6. When user picks a task: `pomo start --position <n>`
 
 ### Agent / MCP layer
 
@@ -139,25 +146,32 @@ pip install "pomo-cli[mcp]"
 Use MCP when the agent client should call a trusted local interface directly instead
 of shelling out through CLI commands.
 
+MCP mirrors the CLI's start-first model:
+- `start_task(task_title, planned_minutes)` creates a new ad hoc task.
+- `start_task(task_id=<id>)` starts a planned backlog task by id.
+- `start_task(position=<n>)` starts a planned backlog task by today's backlog position.
+- `start_task(position=<n>, planned_minutes=<m>)` starts a planned task with an estimate override.
+- `run_planned_task(...)` remains available as a backwards-compatible wrapper.
+
 ---
 
 ## State Model
 
 ```
-planned → running → session_closed → running (continue)
+planned → running → session_closed → running (continue/start)
                  ↘                ↘
                   completed        completed
 ```
 
 - **planned** — in the backlog, not yet started
-- **running** — countdown active in terminal
-- **session_closed** — timer hit 0 or Ctrl+C, elapsed time recorded, task not yet done
+- **running** — session active; countdown is optional via `pomo watch` or `--watch`
+- **session_closed** — countdown hit 0 in `watch`, elapsed time recorded, task not yet done
 - **completed** — explicitly marked done
 
 Key rules:
 - Multiple active sessions across different tasks are allowed.
 - A single task cannot have more than one active session at a time.
-- `run` / `continue` fail if that same task is already running. `start` creates a new task session.
+- `start` / `continue` fail if that same task is already running. `start --task` creates a new task session.
 - `complete` works whether the task is `running` or `session_closed`.
 
 ---
@@ -194,7 +208,7 @@ When uncertain, ask: "How long do you want to set the timer for?"
 - Use `pomo status` to check state before deciding which command to run next.
 - Use `--latest` only as a fallback — prefer explicit `--task-id` to avoid ambiguity.
 - `pomo summary` is useful for end-of-day review: "here's what you got done today."
-- The countdown runs in the foreground. After starting, tell the user the timer is running and they can Ctrl+C and re-attach later with `pomo watch`.
+- `start`, `continue`, and `run` are non-blocking by default. Use `pomo watch` or `--watch` only when a visible foreground countdown is useful.
 
 ---
 
@@ -218,7 +232,7 @@ Tasks pulled via Slack MCP (standup notes) or Linear MCP (ticket assigned):
 1. Extract concise task title.
 2. Run `pomo status` — if that exact title is already running, continue silently.
 3. If not running: `pomo start --task "<title>" --minutes 25`
-4. Confirm briefly: "Session started: '<title>'." — do not interrupt conversation flow.
+4. Continue the real work. Confirm briefly only if useful: "Session started: '<title>'."
 
 Multiple sessions can run in parallel. You may start a session for a new task even if another is already running.
 
