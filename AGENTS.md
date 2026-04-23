@@ -26,6 +26,27 @@ For MCP support, install the optional extra:
 pip install "pomo-cli[mcp]"
 ```
 
+Installing the Python package only makes the `pomo` and `pomo-mcp` commands
+available. For global auto-trigger behavior in other projects, install the
+agent skill globally.
+
+From a cloned checkout:
+
+```bash
+mkdir -p ~/.codex/skills/pomo ~/.claude/skills/pomo
+cp .claude/skills/pomo/SKILL.md ~/.codex/skills/pomo/SKILL.md
+cp .claude/skills/pomo/SKILL.md ~/.claude/skills/pomo/SKILL.md
+```
+
+Without cloning the repo:
+
+```bash
+mkdir -p ~/.codex/skills/pomo ~/.claude/skills/pomo
+curl -fsSL https://raw.githubusercontent.com/Samlilol/pomo-cli/main/.claude/skills/pomo/SKILL.md \
+  -o ~/.codex/skills/pomo/SKILL.md
+cp ~/.codex/skills/pomo/SKILL.md ~/.claude/skills/pomo/SKILL.md
+```
+
 ## Command Layers
 
 ### Core focus loop

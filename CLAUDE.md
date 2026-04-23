@@ -16,6 +16,29 @@ pip install -e ".[mcp]"   # optional MCP server support
 
 If your checkout path contains spaces (e.g. `/Users/you/Desktop/Study Repo`), use a venv path without spaces like `/tmp/pomo-cli-venv`. The generated `pomo` script needs a valid interpreter path.
 
+## Global Agent Setup
+
+`pip install` only installs the runtime commands (`pomo` and, with the extra,
+`pomo-mcp`). To make Codex or Claude auto-trigger `pomo` outside this repo,
+install the agent skill globally too.
+
+From a cloned checkout:
+
+```bash
+mkdir -p ~/.codex/skills/pomo ~/.claude/skills/pomo
+cp .claude/skills/pomo/SKILL.md ~/.codex/skills/pomo/SKILL.md
+cp .claude/skills/pomo/SKILL.md ~/.claude/skills/pomo/SKILL.md
+```
+
+Without cloning the repo:
+
+```bash
+mkdir -p ~/.codex/skills/pomo ~/.claude/skills/pomo
+curl -fsSL https://raw.githubusercontent.com/Samlilol/pomo-cli/main/.claude/skills/pomo/SKILL.md \
+  -o ~/.codex/skills/pomo/SKILL.md
+cp ~/.codex/skills/pomo/SKILL.md ~/.claude/skills/pomo/SKILL.md
+```
+
 ## Running Tests
 
 ```bash
