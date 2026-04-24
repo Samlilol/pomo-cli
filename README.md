@@ -8,6 +8,10 @@ Local work observability runtime for agent-assisted work.
 tracking, and completing task-linked work sessions without needing a GUI, daemon,
 or cloud service.
 
+## Demo
+
+![pomo-cli demo: plan tasks, inspect backlog, start work, complete work, and review the daily summary](docs/pomo-demo.gif)
+
 ## What
 
 `pomo-cli` is a local-first CLI and optional MCP server for task and session
